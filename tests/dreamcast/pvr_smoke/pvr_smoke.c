@@ -1,10 +1,114 @@
 #include <kos.h>
+#include <dc/biosfont.h>
+#include <dc/flashrom.h>
 #include <GL/gl.h>
 #include <stdio.h>
 
 #define PHASE_FRAMES 150
-#define NUM_PHASES 23
+#define NUM_PHASES 24
 #define FRAME_LIMIT (PHASE_FRAMES * NUM_PHASES)
+
+/* Select the requested resolution family. Override on the build command line
+ * to validate another size, e.g. -DPVR_SMOKE_VIDEO_MODE=DM_320x240. Startup
+ * then picks a supported KOS refresh mode and derives the viewport from it. */
+#ifndef PVR_SMOKE_VIDEO_MODE
+#  define PVR_SMOKE_VIDEO_MODE DM_640x480
+#endif
+
+/* Map KOS display modes to pixel dimensions. vid_set_mode() returns void, so
+ * dimensions cannot be read back; this table keeps mode and viewport in sync. */
+static int smoke_mode_dim(int dm, int *w, int *h) {
+  switch (dm) {
+    case DM_320x240:
+    case DM_320x240_VGA:
+    case DM_320x240_NTSC:
+    case DM_320x240_PAL: *w = 320; *h = 240; return 0;
+    case DM_640x480:
+    case DM_640x480_VGA:
+    case DM_640x480_NTSC_IL:
+    case DM_640x480_PAL_IL: *w = 640; *h = 480; return 0;
+    case DM_256x256:
+    case DM_256x256_PAL_IL: *w = 256; *h = 256; return 0;
+    case DM_768x480:
+    case DM_768x480_NTSC_IL:
+    case DM_768x480_PAL_IL: *w = 768; *h = 480; return 0;
+    case DM_768x576:
+    case DM_768x576_PAL_IL: *w = 768; *h = 576; return 0;
+    default: *w = 0; *h = 0; return -1;
+  }
+}
+
+static int smoke_mode_for_refresh(int width, int use_60hz, int is_vga) {
+  if (width == 320) {
+    if (!use_60hz) return DM_320x240_PAL;
+    return is_vga ? DM_320x240_VGA : DM_320x240_NTSC;
+  }
+  if (width == 640) {
+    if (!use_60hz) return DM_640x480_PAL_IL;
+    return is_vga ? DM_640x480_VGA : DM_640x480_NTSC_IL;
+  }
+  if (width == 768) {
+    return use_60hz ? DM_768x480_NTSC_IL : DM_768x576_PAL_IL;
+  }
+  return -1;
+}
+
+/* Offer the 50/60 Hz choice before initializing TinyGL. KOS owns the display
+ * timing; TinyGL receives the selected mode's actual dimensions as its
+ * viewport. Like the SDL Dreamcast driver, VGA is 60 Hz only. */
+static int smoke_choose_video_mode(int requested_mode) {
+  int width, height;
+  int is_vga = (vid_check_cable() == CT_VGA);
+  int region = flashrom_get_region();
+  int default_60hz = (region != FLASHROM_REGION_EUROPE);
+  int selected_60hz;
+  int selected_mode;
+  maple_device_t *controller;
+  cont_state_t *state;
+  int ticks;
+  int i;
+
+  if (smoke_mode_dim(requested_mode, &width, &height) < 0) return -1;
+  if (width != 320 && width != 640 && width != 768) return requested_mode;
+
+  if (is_vga) {
+    return smoke_mode_for_refresh(width, 1, 1);
+  }
+
+  /* Draw the choice on a known 640x480 surface before changing the mode. */
+  vid_set_mode(default_60hz ? DM_640x480_NTSC_IL : DM_640x480_PAL_IL,
+               PM_RGB565);
+  for (i = 0; i < 640 * 480; ++i) vram_s[i] = 0;
+  bfont_draw_str(vram_s + 640 * 5 + 32, 640, true,
+                 "Choose video refresh rate");
+  bfont_draw_str(vram_s + 640 * 8 + 32, 640, true,
+                 "A: 60 Hz       B: 50 Hz");
+  bfont_draw_str(vram_s + 640 * 11 + 32, 640, true,
+                 "START: regional default");
+  bfont_draw_str(vram_s + 640 * 14 + 32, 640, true,
+                 default_60hz ? "Auto-selecting 60 Hz in 5 seconds" :
+                                "Auto-selecting 50 Hz in 5 seconds");
+
+  controller = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
+  state = controller ? (cont_state_t *)maple_dev_status(controller) : NULL;
+  selected_60hz = default_60hz;
+  for (ticks = 0; ticks < 500; ++ticks) {
+    uint32_t buttons = state ? state->buttons : 0;
+    if (buttons & CONT_A) {
+      selected_60hz = 1;
+      break;
+    }
+    if (buttons & CONT_B) {
+      selected_60hz = 0;
+      break;
+    }
+    if (buttons & CONT_START) break;
+    thd_sleep(10);
+  }
+
+  selected_mode = smoke_mode_for_refresh(width, selected_60hz, 0);
+  return selected_mode >= 0 ? selected_mode : requested_mode;
+}
 
 /* Reset the modelview matrix so phases do not leak transforms into each other.
  * glOrtho is a no-op in this TinyGL version, so transforms use modelview only. */
@@ -274,6 +378,41 @@ static void draw_blend_disabled(void) {
     glEnd();
 }
 
+/* Full-screen validation scene for alternate video modes.
+ *
+ * A red polygon spanning -1..1 covers the entire display at any resolution,
+ * and a blue reference square in the top-left corner spans 0.4 normalized
+ * units (~20% of the screen). On hardware, the red polygon must fill the whole
+ * screen and the blue square must sit at the top-left at about 20% of the
+ * width. A viewport that is too large or too small (or wrong aspect) makes
+ * either visibly wrong, so this is the visible check for viewport sizing. */
+static void draw_viewport_fullscreen(void) {
+    reset_modelview();
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_TEXTURE_2D);
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+
+    /* Full-screen red polygon (-1..1 covers the whole display). */
+    glColor3f(1.0f, 0.0f, 0.0f);
+    glBegin(GL_POLYGON);
+    glVertex2f(-1.0f, -1.0f);
+    glVertex2f( 1.0f, -1.0f);
+    glVertex2f( 1.0f,  1.0f);
+    glVertex2f(-1.0f,  1.0f);
+    glEnd();
+
+    /* Top-left reference square (~20% of the screen). */
+    glColor3f(0.0f, 0.0f, 1.0f);
+    glBegin(GL_POLYGON);
+    glVertex2f(-1.0f,  1.0f);
+    glVertex2f(-0.6f,  1.0f);
+    glVertex2f(-0.6f,  0.6f);
+    glVertex2f(-1.0f,  0.6f);
+    glEnd();
+}
+
 /* 256x256 RGB source textures (TinyGL converts these to RGB565). */
 static uint8_t tex_quadrant[256 * 256 * 3];
 static uint8_t tex_gradient[256 * 256 * 3];
@@ -405,6 +544,7 @@ static void draw_phase(int phase) {
     case 20: draw_blend_over(0.5f);              break; /* blend SRC_ALPHA .5   */
     case 21: draw_blend_over(0.25f);             break; /* blend SRC_ALPHA .25    */
     case 22: draw_blend_disabled();              break; /* blend disabled         */
+    case 23: draw_viewport_fullscreen();         break; /* fullscreen viewport    */
     }
 }
 
@@ -433,6 +573,7 @@ static const char *phase_label(int phase) {
     case 20: return "P21 blend SRC_ALPHA .5 over red";
     case 21: return "P22 blend SRC_ALPHA .25 over red";
     case 22: return "P23 blend disabled (opaque green)";
+    case 23: return "P24 fullscreen viewport";
     default: return "??";
     }
 }
@@ -454,17 +595,35 @@ static int capture_phase_screenshot(int phase) {
 int main(int argc, char **argv) {
     int frame;
     int current_phase = -1;
+    int selected_mode;
+    int refresh_hz;
 
     (void)argc;
     (void)argv;
 
-    printf("pvr_smoke: setting 640x480 RGB565 video mode\n");
-    vid_set_mode(DM_640x480, PM_RGB565);
+    int vm_w = 0, vm_h = 0;
+
+    selected_mode = smoke_choose_video_mode(PVR_SMOKE_VIDEO_MODE);
+    if (selected_mode < 0 || smoke_mode_dim(selected_mode, &vm_w, &vm_h) != 0) {
+        printf("pvr_smoke: unsupported video mode 0x%X\n", PVR_SMOKE_VIDEO_MODE);
+        return 1;
+    }
+
+    refresh_hz = (selected_mode == DM_320x240_PAL ||
+                  selected_mode == DM_640x480_PAL_IL ||
+                  selected_mode == DM_256x256_PAL_IL ||
+                  selected_mode == DM_768x480_PAL_IL ||
+                  selected_mode == DM_768x576_PAL_IL) ? 50 : 60;
+    printf("pvr_smoke: setting %dx%d RGB565 %dHz video mode\n",
+           vm_w, vm_h, refresh_hz);
+    vid_set_mode(selected_mode, PM_RGB565);
 
     build_quadrant_texture();
     build_gradient_texture();
 
-    if(glInitPVR(640, 480) < 0) {
+    /* Derive the viewport from the selected display mode so the two never
+     * diverge; a mismatched viewport scales geometry incorrectly. */
+    if(glInitPVR(vm_w, vm_h) < 0) {
         printf("pvr_smoke: TinyGL PVR initialization failed\n");
         return 1;
     }

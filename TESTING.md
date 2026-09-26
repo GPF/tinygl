@@ -116,9 +116,9 @@ kos-tool -m /tmp -t "$DC_IP" -x tests/dreamcast/pvr_smoke/tinygl-pvr-smoke.elf
 ```
 
 KOS `vid_screen_shot()` saves a 640x480 PPM after each phase to the host
-running `kos-tool`. The current test saves phases 1–20. Inspect these captures
-(they map to `/tmp`) to prove on-screen pixels; the loader log alone does not
-prove pixels.
+running `kos-tool`. The current test saves phases 1–24 (24 phases, 150 frames
+each). Inspect these captures (they map to `/tmp`) to prove on-screen pixels;
+the loader log alone does not prove pixels.
 
 **PPM parsing note:** KOS writes a PPM with a comment line (`#KallistiOS
 Screen Shot`) in the header, so plain ImageMagick `convert` mis-parses it.
@@ -306,8 +306,92 @@ expected distinct pixels. Opaque geometry remains on `PVR_LIST_OP_POLY`; when
 a scene first encounters blending, the backend closes the OP list and switches
 to TR. P17 remains black after this list arrangement.
 
+## Alternate video modes and viewport sizing (work-order item 5a)
+
+`tests/dreamcast/pvr_smoke/pvr_smoke.c` now selects the KOS display mode via a
+build-time macro `PVR_SMOKE_VIDEO_MODE` (default `DM_640x480`). Override it on
+the build command line to validate a different resolution:
+
+```bash
+source /opt/toolchains/dc/kos/environ.sh
+make -C tests/dreamcast/pvr_smoke clean
+make -C tests/dreamcast/pvr_smoke SMOKE_CFLAGS="-DPVR_SMOKE_VIDEO_MODE=DM_320x240"
+```
+
+`smoke_mode_dim()` maps each available mode (`DM_320x240`, `DM_640x480`,
+`DM_256x256`, `DM_768x480`, `DM_768x576`) to its pixel size, and the viewport is
+passed to `glInitPVR(vm_w, vm_h)` instead of a hardcoded 640x480. This keeps the
+mode and viewport in sync. `vid_set_mode()` returns `void`, so dimensions cannot
+be read back; the table is the single source of truth.
+
+Before initializing TinyGL, the smoke/demo path now shows a 5-second refresh
+picker on non-VGA cables: A selects 60 Hz, B selects 50 Hz, and Start or timeout
+keeps the regional default (Europe defaults to 50 Hz; other/unknown regions to
+60 Hz). It uses KOS's BIOS font and Maple controller state. For VGA, it selects
+60 Hz directly because KOS provides VGA modes at 60 Hz only, matching the SDL
+Dreamcast driver's policy. The selected KOS mode's actual width/height are then
+passed to `glInitPVR`. This picker demonstrates application-owned mode
+selection; the TinyGL library itself does not choose KOS video timing.
+
+New phase 24 draws a full-screen red polygon (`-1..1`, covers the whole display
+at any resolution) plus a blue reference square in the top-left corner spanning
+0.4 normalized units (~20% of the width). On hardware the red polygon must fill
+the screen and the blue square must sit at the top-left at about 20% of the
+width; a viewport that is too large, too small, or wrong aspect makes either
+visibly wrong. This is the visible viewport-sizing check.
+
+Hardware captures (KOS 2.3.0, NTSC Dreamcast with VGA output):
+
+| Mode | Run | Phase 24 capture | Result |
+|---|---|---|---|
+| `DM_320x240` | PASS, returned 0; no submission errors | 320x240; blue square 63x47 at top-left; red field; one-pixel bottom/right black edge | viewport matches selected dimensions |
+| `DM_640x480` | PASS, returned 0; no submission errors | 640x480; blue square about 20% width; red field; one-pixel bottom/right black edge | default mode passes |
+| `DM_768x480` | PASS, returned 0; no submission errors | 768x480; blue square 153x95 at top-left; red field; one-pixel bottom/right black edge | NTSC high-resolution control passes |
+| `DM_768x576` | PASS, returned 0; no submission errors | P1 and P24 are entirely black | expected PAL timing mismatch on NTSC/VGA; PAL output not verified |
+
+KOS defines `DM_768x576` as PAL 50 Hz interlaced and `DM_768x480` as NTSC
+60 Hz interlaced. The console used here is NTSC with VGA output, so the picker
+selects 60 Hz and uses `DM_768x480` for the 768-wide family. The PAL
+`DM_768x576` capture was all black on this setup, as expected when the attached
+NTSC/VGA display cannot sync to PAL timing; this is not evidence of a backend
+defect. PAL-compatible hardware was not available, so keep PAL output
+confirmation as an optional future customer test. Flycast 2.7
+is installed and can load the PAL ELF with `Dreamcast.Broadcast` configured,
+but this session did not produce a usable visual capture: KOS screenshots at
+`/pc/...` cannot be opened by Flycast, and a desktop-wide screenshot was blocked
+by the automatic approval review because it could include unrelated screen
+contents. Emulator output remains unverified. For the passing runs, phase 24's one-pixel bottom/right
+edge is rasterization coverage; the red field and correctly sized top-left blue
+square are present. The default 640x480 build is restored locally.
+
+## PVR submission error reporting and recovery (work-order item 5b)
+
+`src/pvr_dc.c` now counts submission failures into `tgl_pvr_submission_errors` at
+each failure site (init, `pvr_list_begin`, list transition, polygon-header and
+vertex submissions, textured/solid polygon header and vertex submissions, `pvr_list_finish`,
+`pvr_scene_finish`, and shutdown) and prints a
+`TinyGL PVR: N submission error(s) this session` summary at shutdown. This turns
+the previously transient per-error stderr messages into a durable session total.
+
+Recovery: the PVR list state machine already tolerates a half-open list (the
+`pvr_list_begin` auto-finishes a previously-open different list, and `finish`
+returns -1 only when nothing was open). `tgl_pvr_flush()` still finishes the
+half-open list from a failed primitive, so the next scene begins a fresh OP list.
+The list-transition failure now also resets `tgl_pvr_list_type` to a sentinel so
+a failed transition cannot leave a stale list type driving the next draw.
+
+Hardware test plan: normal runs should print **no** submission-error summary.
+Because KOS `pvr_prim`/`pvr_list` failures are hard to force deterministically,
+this is verified by code review plus a clean build and a zero-error run rather
+than by injecting failures. Confirm the summary line appears only when an error
+actually occurred.
+
+Status: **normal-run hardware check passed** in 320x240, 640x480, 768x480, and 768x576 runs; no submission-error summary appeared. On this VGA setup the new chooser correctly takes the 60 Hz path. The non-VGA on-screen choice and forced-failure recovery remain unverified on hardware.
+
 ## Next steps
 
-- Proceed to work-order item 5 in `NEXT_TASKS.md`: validate alternate video
-  modes and viewport sizing, then exercise PVR scene/list/primitive submission
-  error reporting and recovery.
+- Work-order item 5 is implemented. Future hardware follow-up: verify 50 Hz on
+  PAL-capable output, confirm the on-screen selector there, and find a safe,
+  deterministic way to exercise PVR submission-error recovery. Normal-run
+  error reporting and viewport captures pass on this NTSC/VGA setup at
+  320x240, 640x480, and 768x480.

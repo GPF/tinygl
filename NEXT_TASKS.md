@@ -99,8 +99,47 @@ The backend currently has these known gaps:
    blending begins. The `glBlendFunc` parameter-array overflow and smoke
    frame-limit omission found during verification are fixed. Unsupported GL
    factors and non-`GL_FUNC_ADD` equations remain documented as unsupported.
-5. Validate initialization and viewport sizing with alternate KOS video modes,
-   and improve recovery/reporting for PVR scene/list/primitive submission errors.
+5. ~~Validate initialization/viewport sizing across KOS modes and improve PVR
+   submission error reporting/recovery.~~ **IMPLEMENTED; PAL CUSTOMER CHECK OPTIONAL.**
+   - Video modes/viewport (`tests/dreamcast/pvr_smoke/pvr_smoke.c`): the
+     smoke/demo startup now offers a 5-second on-screen A=60Hz / B=50Hz picker
+     on non-VGA cables, with Start/timeout using the flashrom-region default.
+     VGA selects 60Hz directly, matching the SDL Dreamcast driver's policy.
+     `PVR_SMOKE_VIDEO_MODE` remains the build-time requested resolution family
+     (default `DM_640x480`), and `smoke_mode_dim()` maps the chosen KOS mode to
+     its pixel size. The viewport is passed to `glInitPVR`
+     from the mode dimensions, keeping the two in sync (the old 640x480 is
+     the default, so prior phases are unchanged). New phase 24 draws a
+     full-screen red polygon plus a top-left blue ~20% reference square as the
+     visible viewport-sizing check. Alternate modes are selectable via
+     `make SMOKE_CFLAGS="-DPVR_SMOKE_VIDEO_MODE=DM_320x240"` (the smoke
+     `Makefile` forwards `$(SMOKE_CFLAGS)` on `CFLAGS`, which the `kos-cc`
+     wrapper passes to the compiler). Built clean for 320x240, 640x480,
+     768x480, and 768x576. The PAL picker path is not exercised by this
+     NTSC/VGA setup.
+   - Submission errors (`src/pvr_dc.c`): a `tgl_pvr_submission_errors` counter
+     is incremented at every failure site (init, list begin, list transition,
+     polygon-header/vertex submissions, list/scene finish) and a session
+     summary prints at shutdown. The list-transition failure now also resets
+     `tgl_pvr_list_type` to a sentinel so a failed transition cannot leave a
+     stale list type driving the next draw; `tgl_pvr_flush()` still finishes
+     the half-open list so the next scene begins fresh.
+   - **Hardware results (KOS 2.3.0, VGA cable):** full 24-phase runs at
+     320x240 and 640x480 passed with no submission-error messages. Phase 24
+     captures have the expected red field and top-left blue square (about 20%
+     width); rasterization leaves a one-pixel black edge at the bottom/right.
+     The 768x480 NTSC mode also passed; its P24 capture is 768x480 with a
+     153x95 blue square at the top-left and a one-pixel bottom/right black
+     edge. The 768x576 PAL mode returned PASS but its P1 and P24 captures are
+     entirely black on this NTSC/VGA console. This is expected when the display
+     cannot sync to PAL timing, not evidence of a PVR backend defect. Leave
+     confirmation on PAL-compatible hardware as a future customer test. The
+     default 640x480 ELF is built.
+   - **Submission errors:** all four hardware runs (320x240,
+     640x480, 768x480, and 768x576) completed without submission-error
+     messages. The VGA startup path selected 60Hz directly. The non-VGA picker
+     and forced-failure behavior remain untested because the former needs a
+     non-VGA setup and KOS submission failures are difficult to induce.
 
 Keep each change small and add a visible hardware test scene alongside it.
 Inspect vertex flags, color packing, UV/depth mapping, alignment, cache

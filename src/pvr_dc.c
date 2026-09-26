@@ -22,6 +22,7 @@ static int tgl_pvr_initialized;
 static int tgl_pvr_scene_active;
 static int tgl_pvr_list_active;
 static pvr_list_t tgl_pvr_list_type;
+static int tgl_pvr_submission_errors;  /* PVR submission failures this session */
 static int tgl_pvr_header_depth_test = -1;
 static int tgl_pvr_header_depth_func = -1;
 static int tgl_pvr_header_depth_write = -1;
@@ -59,6 +60,7 @@ int tgl_pvr_init(void) {
 
   if (tgl_pvr_initialized) return -1;
   if (pvr_init(&tgl_pvr_params) < 0) {
+    tgl_pvr_submission_errors++;
     fprintf(stderr, "TinyGL PVR: pvr_init failed\n");
     return -1;
   }
@@ -173,8 +175,12 @@ static void tgl_pvr_begin_scene(void) {
 
   pvr_scene_begin();
   if (pvr_list_begin(PVR_LIST_OP_POLY) < 0) {
+    tgl_pvr_submission_errors++;
     fprintf(stderr, "TinyGL PVR: pvr_list_begin failed\n");
-    pvr_scene_finish();
+    if (pvr_scene_finish() < 0) {
+      tgl_pvr_submission_errors++;
+      fprintf(stderr, "TinyGL PVR: pvr_scene_finish failed\n");
+    }
     return;
   }
   tgl_pvr_scene_active = 1;
@@ -192,8 +198,10 @@ static void tgl_pvr_select_list(int blend_enabled) {
    * appears, subsequent primitives stay on TR until the next scene. */
   if (tgl_pvr_list_type == PVR_LIST_TR_POLY) return;
   if (pvr_list_finish() < 0 || pvr_list_begin(wanted) < 0) {
+    tgl_pvr_submission_errors++;
     fprintf(stderr, "TinyGL PVR: list transition failed\n");
     tgl_pvr_list_active = 0;
+    tgl_pvr_list_type = -1;
     return;
   }
   tgl_pvr_list_type = wanted;
@@ -301,6 +309,7 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
     tgl_pvr_update_txr_header(c);
 
     if (pvr_prim(&tgl_pvr_txr_header, sizeof(tgl_pvr_header)) < 0) {
+      tgl_pvr_submission_errors++;
       fprintf(stderr, "TinyGL PVR: texture polygon header submission failed\n");
       return;
     }
@@ -320,6 +329,7 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
       vertex.argb = 0xFFFFFFFF;
 
       if (pvr_prim(&vertex, sizeof(vertex)) < 0) {
+        tgl_pvr_submission_errors++;
         fprintf(stderr, "TinyGL PVR: vertex submission failed\n");
         return;
       }
@@ -330,6 +340,7 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
   tgl_pvr_update_header(c);
 
   if (pvr_prim(&tgl_pvr_header, sizeof(tgl_pvr_header)) < 0) {
+    tgl_pvr_submission_errors++;
     fprintf(stderr, "TinyGL PVR: polygon header submission failed\n");
     return;
   }
@@ -350,6 +361,7 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
     vertex.argb = (a << 24) | (r << 16) | (g << 8) | b;
 
     if (pvr_prim(&vertex, sizeof(vertex)) < 0) {
+      tgl_pvr_submission_errors++;
       fprintf(stderr, "TinyGL PVR: vertex submission failed\n");
       return;
     }
@@ -359,8 +371,11 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
 void tgl_pvr_flush(void) {
   if (tgl_pvr_list_active) {
     if (pvr_list_finish() < 0) {
+      tgl_pvr_submission_errors++;
       fprintf(stderr, "TinyGL PVR: pvr_list_finish failed\n");
     }
+    /* The half-open list is abandoned; the next begin_scene starts a fresh
+     * OP list so a submission error does not corrupt the following frame. */
     tgl_pvr_list_active = 0;
   }
 
@@ -372,6 +387,7 @@ void tgl_pvr_flush(void) {
     pvr_scene_begin();
   }
   if (pvr_scene_finish() < 0) {
+    tgl_pvr_submission_errors++;
     fprintf(stderr, "TinyGL PVR: pvr_scene_finish failed\n");
   }
   tgl_pvr_scene_active = 0;
@@ -382,7 +398,13 @@ void tgl_pvr_shutdown(void) {
 
   tgl_pvr_flush();
   if (pvr_shutdown() < 0) {
+    tgl_pvr_submission_errors++;
     fprintf(stderr, "TinyGL PVR: pvr_shutdown failed\n");
+  }
+  /* Report any submission failures accumulated during the session. */
+  if (tgl_pvr_submission_errors) {
+    fprintf(stderr, "TinyGL PVR: %d submission error(s) this session\n",
+            tgl_pvr_submission_errors);
   }
   tgl_pvr_initialized = 0;
 }

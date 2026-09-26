@@ -6,16 +6,21 @@ emulator image does not prove the PVR path is correct.
 
 ## Objective
 
-Continue with work-order item 5 in `NEXT_TASKS.md`: validate alternate KOS
-video modes and viewport sizing, then investigate PVR scene/list/primitive
-submission error reporting and recovery. Blend and alpha behavior is already
-hardware-verified; its confirmed implementation and test results are recorded
-below and in `TESTING.md`.
+Work-order item 5 is implemented. The smoke/demo startup now offers A=60Hz and
+B=50Hz on non-VGA outputs, using the flashrom region as the default; VGA follows
+the SDL policy and selects 60Hz directly. Viewport captures and normal-run
+submission reporting pass at 320x240, 640x480, and 768x480 on NTSC/VGA hardware.
+`DM_768x576` captured black on this NTSC/VGA console, which is expected when
+the display cannot sync to PAL timing and is not evidence of a backend defect.
+PAL-compatible hardware confirmation is an optional future customer test.
+Flycast did not provide a usable screenshot in this run. The non-VGA picker
+path and forced PVR failure recovery remain unverified. Blend/alpha results are
+in `TESTING.md`.
 
 The existing smoke test covers solid fill, Gouraud colors, a modelview
 transform, clipping, culling, polygon-mode behavior, depth state, and texture
 upload/interpolation. The Dreamcast run saves a PPM screenshot for each phase,
-so inspect captures while developing blend/alpha cases. Make the smallest safe
+so inspect captures while validating modes and viewports. Make the smallest safe
 changes.
 
 ## Read these first
@@ -110,8 +115,7 @@ Do not claim hardware pixel success from compilation or loader logs alone.
 
 If the console is unavailable, complete the implementation and build, clearly
 mark hardware validation as pending, and give the exact command needed to run
-it. Do not claim blend or alpha behavior passed without inspecting the captured
-pixels.
+it. Do not claim a mode or viewport passed without inspecting its captured pixels.
 
 Blend milestone (work-order item 4) is complete and hardware-verified. P21
 (alpha 0.5) captures center `(128,128,0)` and P22 (alpha 0.25) captures
@@ -119,9 +123,11 @@ Blend milestone (work-order item 4) is complete and hardware-verified. P21
 black. The root cause was KOS accumulation-buffer enable bits being used as
 ordinary blend enables, plus blend primitives submitted through OP. Those bits
 are zero; opaque geometry uses OP and the backend transitions once to TR when
-blending starts. Continue with work-order item 5 in `NEXT_TASKS.md` (alternate
-video modes/viewport sizing and PVR submission error recovery). Do not edit
-SDL2; it is reference-only. Keep hardware captures as the final authority.
+blending starts. Continue with a repeatable submission-error recovery test. If
+PAL-compatible hardware becomes available, confirm `DM_768x576` and the non-VGA
+picker there; black output on the current NTSC/VGA setup is expected for PAL
+timing. Do not edit SDL2; it is reference-only. Keep hardware captures as the
+final authority.
 
 ## Completion checklist
 
