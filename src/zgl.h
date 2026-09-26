@@ -276,6 +276,14 @@ typedef struct GLContext {
 
   /* depth test */
   int depth_test;
+  int depth_func;
+  int depth_mask;
+
+  /* blending: GL blend src/dst factors. The backend maps these to PVR
+   * blend modes. blend_enabled is set by glEnable/glDisable(GL_BLEND). */
+  int blend_enabled;
+  int blend_src;
+  int blend_dst;
 } GLContext;
 
 extern GLContext *gl_ctx;
@@ -292,7 +300,8 @@ void gl_draw_point(GLContext *c,GLVertex *p0);
 int tgl_pvr_init(void);
 void tgl_pvr_shutdown(void);
 void tgl_pvr_set_clear_color(float r,float g,float b);
-void tgl_pvr_draw_triangle(GLVertex *p0,GLVertex *p1,GLVertex *p2);
+void tgl_pvr_draw_triangle(GLContext *c,GLVertex *p0,GLVertex *p1,
+                           GLVertex *p2);
 void tgl_pvr_flush(void);
 #endif
 

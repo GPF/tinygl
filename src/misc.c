@@ -66,6 +66,9 @@ void glopEnableDisable(GLContext *c,GLParam *p)
   case GL_DEPTH_TEST:
     c->depth_test = v;
     break;
+  case GL_BLEND:
+    c->blend_enabled = v;
+    break;
   case GL_POLYGON_OFFSET_FILL:
     if (v) c->offset_states |= TGL_OFFSET_FILL;
     else c->offset_states &= ~TGL_OFFSET_FILL;
@@ -88,6 +91,22 @@ void glopEnableDisable(GLContext *c,GLParam *p)
     }
     break;
   }
+}
+
+void glopDepthFunc(GLContext *c,GLParam *p)
+{
+  c->depth_func=p[1].i;
+}
+
+void glopDepthMask(GLContext *c,GLParam *p)
+{
+  c->depth_mask=(p[1].i != 0);
+}
+
+void glopBlendFunc(GLContext *c,GLParam *p)
+{
+  c->blend_src=p[1].i;
+  c->blend_dst=p[2].i;
 }
 
 void glopShadeModel(GLContext *c,GLParam *p)

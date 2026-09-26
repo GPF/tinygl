@@ -6,16 +6,17 @@ emulator image does not prove the PVR path is correct.
 
 ## Objective
 
-Advance the existing PVR backend by extending its hardware smoke test to cover
-three behaviors that are not yet validated:
+Continue with the in-progress blend/alpha item in `NEXT_TASKS.md`. Hardware
+phases 21 and 22 currently produce byte-identical pixels even though vertex
+alpha reaches the backend as 128 and 64. Diagnose this before moving to the
+later viewport/error-recovery work. Inspect TinyGL's blend state and installed
+KOS PVR APIs; keep unsupported behavior explicit rather than faking support.
 
-1. Per-vertex Gouraud color interpolation.
-2. A TinyGL transform applied before vertices reach the PVR.
-3. Clipping for triangles crossing each screen edge.
-
-Make only the smallest safe code changes needed to make those behaviors visible
-and testable. Do not start implementing textures, depth testing, GL culling,
-blend modes, or point/line output in this task. Those are later milestones.
+The existing smoke test covers solid fill, Gouraud colors, a modelview
+transform, clipping, culling, polygon-mode behavior, depth state, and texture
+upload/interpolation. The Dreamcast run saves a PPM screenshot for each phase,
+so inspect captures while developing blend/alpha cases. Make the smallest safe
+changes.
 
 ## Read these first
 
@@ -28,6 +29,7 @@ blend modes, or point/line output in this task. Those are later milestones.
    - `src/pvr_dc.c`
    - `src/clip.c`
    - `src/init.c`
+   - texture API and rasterization files identified by targeted searches
 
 Read targeted sections only. Before opening additional files, state what
 question that read is meant to answer. Do not repeatedly scan the whole repo.
@@ -36,15 +38,20 @@ question that read is meant to answer. Do not repeatedly scan the whole repo.
 
 - `glInitPVR(width, height)` initializes the PVR backend.
 - TinyGL performs its ordinary transform and clip path before dispatching
-  filled, untextured triangles to `tgl_pvr_draw_triangle`.
-- `src/pvr_dc.c` currently emits screen-space X/Y, fixed Z=0.5, and per-vertex
-  ARGB values in a Gouraud PVR polygon context.
-- Points and lines are currently no-ops on the PVR path. Textured triangles
-  are skipped. PVR depth comparison is always, so GL depth behavior is not
-  implemented.
-- The existing smoke test displays a centered red triangle on black for 600
-  frames on the user's Dreamcast. The user visually confirmed it looked right;
-  dc-load reported `pvr_smoke: PASS` and `Program returned 0`.
+  filled triangles to `tgl_pvr_draw_triangle`.
+- `src/pvr_dc.c` emits screen-space X/Y, transformed depth, per-vertex ARGB,
+  and textured UVs. GL depth function/write mask and RGB565 texture upload are
+  hardware-covered by phases 14–20.
+- Points and lines are currently no-ops on the PVR path.
+- The 23-phase smoke test includes baseline, culling, polygon mode, depth,
+  texture, and blend cases. KOS saves PPMs as
+  `/tmp/tinygl-pvr-phase-N.ppm` on the host running `kos-tool`.
+- The latest run reported `pvr_smoke: PASS` and `Program returned 0`. Parsed
+  pixel results confirmed phases 14–17 for depth and 18–20 for textures. The
+  texture header cache tracks pixmap changes; phases 19–20 show over 1,300
+  colors after the fix. Blend phases 21 and 22 have identical captures despite
+  alpha 128 vs 64 reaching PVR; phase 23 is opaque green. Blend alpha remains
+  under investigation.
 - The target environment used KOS 2.3.0, 640x480 VGA, `kos-cc`, and the local
   KOS port of SH4ZAM. The console is available through dc-load-ip at
   `192.168.0.128` (verify that the address is still right before loading).
@@ -53,34 +60,23 @@ question that read is meant to answer. Do not repeatedly scan the whole repo.
 
 ## Investigation requirements
 
-Before editing, trace the actual code path from the smoke test's GL calls to
-PVR vertex submission. Confirm the smoke target links the TinyGL source/library
-you are inspecting. Check how TinyGL represents current/per-vertex colors,
-matrix transforms, viewport coordinates, and clipped/generated vertices.
-Identify what `glBegin`/`glEnd`, `glColor*`, and matrix calls are supported by
-this TinyGL version instead of assuming modern OpenGL behavior.
+Before editing, trace per-vertex alpha from `glColor4f` through `GLVertex` and
+PVR `argb`, and inspect the compiled PVR blend header/list semantics.
+Confirm the smoke target links the TinyGL source/library you are inspecting.
+Use installed KOS blend documentation/source; do not assume modern OpenGL or
+PVR APIs. Keep facts and hypotheses distinct.
 
-Separate verified facts from hypotheses. In particular, do not assume the PVR
-Gouraud state is correct just because the polygon header requests Gouraud
-shading: verify that the test passes distinct colors per vertex and that the
-hardware shows interpolation. Do not assume clipping is covered merely because
-the triangle is partly off screen; design cases that cross each viewport edge
-and check that the resulting visible geometry is bounded and correctly colored.
+Do not infer correctness from a successful KOS call: capture and inspect the
+resulting PPM images. Preserve existing smoke phases and compare exact pixels
+for phases 21–23 while debugging alpha behavior.
 
 ## Implementation requirements
 
 - Extend the existing smoke scene in clear, labeled phases that are easy to
-  identify visually. Keep the black background and retain the original solid
-  red centered triangle as a baseline if practical.
-- Add a triangle with three distinct vertex colors. Use obvious colors (for
-  example red, green, and blue) so interpolation can be seen on a CRT/display.
-- Add a transformed triangle using TinyGL matrix operations that this codebase
-  actually supports. The expected location/rotation should be easy to recognize
-  and should not accidentally depend on unimplemented GL state.
-- Add cases crossing left, right, top, and bottom screen edges. Keep enough
-  geometry on screen to identify each case. If TinyGL clips to canonical view
-  volume before viewport conversion, test that path rather than working around
-  it in the PVR driver.
+  identify in screenshots. Keep the baseline, color, transform, and clipping
+  phases intact.
+- Keep the blend cases visible and vary alpha enough to distinguish P21 and P22
+  pixels.
 - Avoid adding a test framework or broad refactor. Keep the scene readable and
   use short labels over serial output to identify phases if the test structure
   supports that.
@@ -104,15 +100,25 @@ make -C tests/dreamcast/pvr_smoke clean
 make -C tests/dreamcast/pvr_smoke
 ```
 
-Load with `kos-tool -t "$DC_IP" -x
+Load with `kos-tool -m /tmp -t "$DC_IP" -x
 tests/dreamcast/pvr_smoke/tinygl-pvr-smoke.elf` after setting `DC_IP` to the
-Dreamcast's current dc-load-ip address. Observe the physical console output;
-do not claim hardware success from compilation or emulator output alone.
+Dreamcast's current dc-load-ip address. The `-m /tmp` option maps target
+`/pc` to host `/tmp`, where KOS screenshots appear as
+`tinygl-pvr-phase-N.ppm`. Open and inspect each new screenshot. `kos-tool -d`
+dumps target memory; it is not the screenshot/file-download shortcut.
+Do not claim hardware pixel success from compilation or loader logs alone.
 
 If the console is unavailable, complete the implementation and build, clearly
 mark hardware validation as pending, and give the exact command needed to run
-it. Do not claim that color interpolation, transform, or clipping passed on
-hardware without an observed result.
+it. Do not claim blend or alpha behavior passed without inspecting the captured
+pixels.
+
+The blend milestone (work-order item 4) has state plumbing and PVR header
+mapping in `src/zgl.h`, `src/opinfo.h`, `src/api.c`, `src/misc.c`,
+`src/pvr_dc.c`, and `include/GL/gl.h`. P21–P23 have been run on hardware, but
+P21 and P22 are byte-identical despite distinct alpha values reaching PVR.
+Investigate the header/list/vertex alpha path and make the smallest targeted
+fix, then rebuild, rerun the 23-phase test, and inspect the captured pixels.
 
 ## Completion checklist
 

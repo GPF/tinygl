@@ -178,6 +178,8 @@ static void glInitContext(ZBuffer *zbuffer,int xsize,int ysize)
 
   /* depth test */
   c->depth_test = 0;
+  c->depth_func = GL_LESS;
+  c->depth_mask = 1;
 }
 
 void glInit(void *zbuffer1)

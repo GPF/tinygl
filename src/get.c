@@ -26,6 +26,12 @@ void glGetIntegerv(int pname,int *params)
   case GL_MAX_TEXTURE_STACK_DEPTH:
     *params = MAX_TEXTURE_STACK_DEPTH;
     break;
+  case GL_DEPTH_FUNC:
+    *params = c->depth_func;
+    break;
+  case GL_DEPTH_WRITEMASK:
+    *params = c->depth_mask;
+    break;
   default:
     gl_fatal_error("glGet: option not implemented");
     break;

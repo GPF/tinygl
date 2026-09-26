@@ -278,6 +278,7 @@ void gl_draw_triangle(GLContext *c,
           if (front != 0) return;
           c->draw_triangle_back(c,p0,p1,p2);
         } else {
+          /* GL_FRONT_AND_BACK culls polygons of either winding. */
           return;
         }
       } else {
@@ -392,7 +393,8 @@ void gl_draw_triangle_fill(GLContext *c,
 {
 #ifdef TINYGL_USE_DREAMCAST_PVR
   if (c->pvr_backend) {
-    if (!c->texture_2d_enabled) tgl_pvr_draw_triangle(p0,p1,p2);
+    /* The PVR backend handles textured and untextured triangles itself. */
+    tgl_pvr_draw_triangle(c,p0,p1,p2);
     return;
   }
 #endif
@@ -432,7 +434,7 @@ void gl_draw_triangle_line(GLContext *c,
                            GLVertex *p0,GLVertex *p1,GLVertex *p2)
 {
 #ifdef TINYGL_USE_DREAMCAST_PVR
-    if (c->pvr_backend) return;
+  if (c->pvr_backend) return;
 #endif
     if (c->depth_test) {
         if (p0->edge_flag) ZB_line_z(c->zb,&p0->zp,&p1->zp);
@@ -458,5 +460,3 @@ void gl_draw_triangle_point(GLContext *c,
   if (p1->edge_flag) ZB_plot(c->zb,&p1->zp);
   if (p2->edge_flag) ZB_plot(c->zb,&p2->zp);
 }
-
-

@@ -676,6 +676,9 @@ typedef int GLsizei;
 
 void glEnable(int code);
 void glDisable(int code);
+void glDepthFunc(int func);
+void glDepthMask(GLboolean flag);
+void glBlendFunc(GLenum sfactor, GLenum dfactor);
 
 void glShadeModel(int mode);
 void glCullFace(int mode);
@@ -812,7 +815,6 @@ inline void glPointSize(float) {}
 inline void glLineWidth(float) {}
 inline void glDeleteLists(int, int) {}
 inline void glDepthFunc(int) {}
-inline void glBlendFunc(int, int) {}
 inline void glTexEnvf(int, int, int) {}
 inline void glOrtho(float,float,float,float,float,float){}
 inline void glVertex2i(int,int) {}

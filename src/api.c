@@ -218,6 +218,37 @@ void glDisable(int cap)
   gl_add_op(p);
 }
 
+void glDepthFunc(int func)
+{
+  GLParam p[2];
+
+  assert(func == GL_NEVER || func == GL_LESS || func == GL_EQUAL ||
+         func == GL_LEQUAL || func == GL_GREATER || func == GL_NOTEQUAL ||
+         func == GL_GEQUAL || func == GL_ALWAYS);
+  p[0].op=OP_DepthFunc;
+  p[1].i=func;
+  gl_add_op(p);
+}
+
+void glDepthMask(GLboolean flag)
+{
+  GLParam p[2];
+
+  p[0].op=OP_DepthMask;
+  p[1].i=(flag != GL_FALSE);
+  gl_add_op(p);
+}
+
+void glBlendFunc(GLenum sfactor, GLenum dfactor)
+{
+  GLParam p[3];
+
+  p[0].op=OP_BlendFunc;
+  p[1].i=sfactor;
+  p[2].i=dfactor;
+  gl_add_op(p);
+}
+
 /* glBegin / glEnd */
 
 void glBegin(int mode)
