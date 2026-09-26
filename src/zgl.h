@@ -159,6 +159,7 @@ typedef void (*gl_draw_triangle_func)(struct GLContext *c,
 typedef struct GLContext {
   /* Z buffer */
   ZBuffer *zb;
+  int pvr_backend;
 
   /* lights */
   GLLight lights[MAX_LIGHTS];
@@ -286,6 +287,14 @@ void gl_transform_to_viewport(GLContext *c,GLVertex *v);
 void gl_draw_triangle(GLContext *c,GLVertex *p0,GLVertex *p1,GLVertex *p2);
 void gl_draw_line(GLContext *c,GLVertex *p0,GLVertex *p1);
 void gl_draw_point(GLContext *c,GLVertex *p0);
+
+#ifdef TINYGL_USE_DREAMCAST_PVR
+int tgl_pvr_init(void);
+void tgl_pvr_shutdown(void);
+void tgl_pvr_set_clear_color(float r,float g,float b);
+void tgl_pvr_draw_triangle(GLVertex *p0,GLVertex *p1,GLVertex *p2);
+void tgl_pvr_flush(void);
+#endif
 
 void gl_draw_triangle_point(GLContext *c,
                             GLVertex *p0,GLVertex *p1,GLVertex *p2);

@@ -644,7 +644,9 @@ void glCallList(unsigned int list)
 
 void glFlush(void)
 {
-  /* nothing to do */
+#ifdef TINYGL_USE_DREAMCAST_PVR
+  if (gl_ctx && gl_ctx->pvr_backend) tgl_pvr_flush();
+#endif
 }
 
 void glHint(int target,int mode)
@@ -665,4 +667,3 @@ void glDebug(int mode)
   GLContext *c=gl_get_context();
   c->print_flag=mode;
 }
-

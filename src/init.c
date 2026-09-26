@@ -27,9 +27,8 @@ void endSharedState(GLContext *c)
 }
 
 
-void glInit(void *zbuffer1)
+static void glInitContext(ZBuffer *zbuffer,int xsize,int ysize)
 {
-  ZBuffer *zbuffer=(ZBuffer *)zbuffer1;
   GLContext *c;
   GLViewport *v;
   int i;
@@ -47,8 +46,8 @@ void glInit(void *zbuffer1)
   v=&c->viewport;
   v->xmin=0;
   v->ymin=0;
-  v->xsize=zbuffer->xsize;
-  v->ysize=zbuffer->ysize;
+  v->xsize=xsize;
+  v->ysize=ysize;
   v->updated=1;
 
   /* shared state */
@@ -181,9 +180,32 @@ void glInit(void *zbuffer1)
   c->depth_test = 0;
 }
 
+void glInit(void *zbuffer1)
+{
+  ZBuffer *zbuffer=(ZBuffer *)zbuffer1;
+  glInitContext(zbuffer,zbuffer->xsize,zbuffer->ysize);
+}
+
+int glInitPVR(int xsize,int ysize)
+{
+#ifdef TINYGL_USE_DREAMCAST_PVR
+  if (tgl_pvr_init() < 0) return -1;
+  glInitContext(NULL,xsize,ysize);
+  gl_ctx->pvr_backend=1;
+  return 0;
+#else
+  (void)xsize;
+  (void)ysize;
+  return -1;
+#endif
+}
+
 void glClose(void)
 {
   GLContext *c=gl_get_context();
+#ifdef TINYGL_USE_DREAMCAST_PVR
+  if (c->pvr_backend) tgl_pvr_shutdown();
+#endif
   endSharedState(c);
   gl_free(c);
 }

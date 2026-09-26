@@ -15,6 +15,15 @@ endif
 INCLUDES = -I../include
 LIB = libTinyGL.a
 
+ifdef TINYGL_USE_SH4ZAM
+CFLAGS += -DTINYGL_USE_SH4ZAM
+endif
+
+ifdef TINYGL_USE_DREAMCAST_PVR
+CFLAGS += -DTINYGL_USE_DREAMCAST_PVR
+OBJS += pvr_dc.o
+endif
+
 all: $(LIB)
 
 $(LIB): $(OBJS)

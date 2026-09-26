@@ -6,6 +6,10 @@
 #include <math.h>
 #include "zmath.h"
 
+#ifdef TINYGL_USE_SH4ZAM
+#include <sh4zam/shz_sh4zam.h>
+#endif
+
 
 /* ******* Gestion des matrices 4x4 ****** */
 
@@ -62,12 +66,20 @@ void gl_M4_MulLeft(M4 *c,M4 *b)
 
 void gl_M4_Move(M4 *a,M4 *b)
 {
+#ifdef TINYGL_USE_SH4ZAM
+	shz_memcpy(a,b,sizeof(M4));
+#else
 	memcpy(a,b,sizeof(M4));
+#endif
 }
 
 void gl_MoveV3(V3 *a,V3 *b)
 {
+#ifdef TINYGL_USE_SH4ZAM
+	shz_memcpy(a,b,sizeof(V3));
+#else
 	memcpy(a,b,sizeof(V3));
+#endif
 }
 
 
@@ -209,8 +221,13 @@ void gl_M4_Rotate(M4 *a,float t,int u)
 	 int v,w;
    if ((v=u+1)>2) v=0;
 	 if ((w=v+1)>2) w=0;
+#ifdef TINYGL_USE_SH4ZAM
+	 s=shz_sinf(t);
+	 c=shz_cosf(t);
+#else
 	 s=sin(t);
 	 c=cos(t);
+#endif
 	 gl_M4_Id(a);
 	 a->m[v][v]=c;	a->m[v][w]=-s;
 	 a->m[w][v]=s;	a->m[w][w]=c;
@@ -244,6 +261,15 @@ void gl_M3_Inv(M3 *a,M3 *m)
 
 int gl_V3_Norm(V3 *a)
 {
+#ifdef TINYGL_USE_SH4ZAM
+	shz_vec3_t normalized;
+	if (a->X*a->X+a->Y*a->Y+a->Z*a->Z == 0.0f) return 1;
+	normalized=shz_vec3_normalize_safe(shz_vec3_init(a->X,a->Y,a->Z));
+	a->X=normalized.x;
+	a->Y=normalized.y;
+	a->Z=normalized.z;
+	return 0;
+#else
 	float n;
 	n=sqrt(a->X*a->X+a->Y*a->Y+a->Z*a->Z);
 	if (n==0) return 1;
@@ -251,6 +277,7 @@ int gl_V3_Norm(V3 *a)
 	a->Y/=n;
 	a->Z/=n;
 	return 0;
+#endif
 }
 
 V3 gl_V3_New(float x,float y,float z)

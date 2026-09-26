@@ -829,6 +829,7 @@ inline void glTexParameterf(int, int, int) {};
 void glDebug(int mode);
 
 void glInit(void *zbuffer);
+int glInitPVR(int xsize,int ysize);
 void glClose(void);
 
 #ifdef __cplusplus

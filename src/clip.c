@@ -68,6 +68,9 @@ void gl_draw_point(GLContext *c,GLVertex *p0)
     if (c->render_mode == GL_SELECT) {
       gl_add_select(c,p0->zp.z,p0->zp.z);
     } else {
+#ifdef TINYGL_USE_DREAMCAST_PVR
+      if (c->pvr_backend) return;
+#endif
       ZB_plot(c->zb,&p0->zp);
     }
   }
@@ -115,6 +118,10 @@ void gl_draw_line(GLContext *c,GLVertex *p1,GLVertex *p2)
   float tmin,tmax;
   GLVertex q1,q2;
   int cc1,cc2;
+
+#ifdef TINYGL_USE_DREAMCAST_PVR
+  if (c->pvr_backend) return;
+#endif
   
   cc1=p1->clip_code;
   cc2=p2->clip_code;
@@ -383,6 +390,12 @@ int count_triangles,count_triangles_textured,count_pixels;
 void gl_draw_triangle_fill(GLContext *c,
                            GLVertex *p0,GLVertex *p1,GLVertex *p2)
 {
+#ifdef TINYGL_USE_DREAMCAST_PVR
+  if (c->pvr_backend) {
+    if (!c->texture_2d_enabled) tgl_pvr_draw_triangle(p0,p1,p2);
+    return;
+  }
+#endif
 #ifdef PROFILE
   {
     int norm;
@@ -418,6 +431,9 @@ void gl_draw_triangle_fill(GLContext *c,
 void gl_draw_triangle_line(GLContext *c,
                            GLVertex *p0,GLVertex *p1,GLVertex *p2)
 {
+#ifdef TINYGL_USE_DREAMCAST_PVR
+    if (c->pvr_backend) return;
+#endif
     if (c->depth_test) {
         if (p0->edge_flag) ZB_line_z(c->zb,&p0->zp,&p1->zp);
         if (p1->edge_flag) ZB_line_z(c->zb,&p1->zp,&p2->zp);
@@ -435,11 +451,12 @@ void gl_draw_triangle_line(GLContext *c,
 void gl_draw_triangle_point(GLContext *c,
                             GLVertex *p0,GLVertex *p1,GLVertex *p2)
 {
+#ifdef TINYGL_USE_DREAMCAST_PVR
+  if (c->pvr_backend) return;
+#endif
   if (p0->edge_flag) ZB_plot(c->zb,&p0->zp);
   if (p1->edge_flag) ZB_plot(c->zb,&p1->zp);
   if (p2->edge_flag) ZB_plot(c->zb,&p2->zp);
 }
-
-
 
 

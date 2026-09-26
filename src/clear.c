@@ -24,7 +24,17 @@ void glopClear(GLContext *c,GLParam *p)
 
   /* TODO : correct value of Z */
 
-  ZB_clear(c->zb,mask & GL_DEPTH_BUFFER_BIT,z,
-	   mask & GL_COLOR_BUFFER_BIT,r,g,b);
+#ifdef TINYGL_USE_DREAMCAST_PVR
+  if (c->pvr_backend) {
+    if (mask & GL_COLOR_BUFFER_BIT) {
+      tgl_pvr_set_clear_color(c->clear_color.v[0],
+                              c->clear_color.v[1],
+                              c->clear_color.v[2]);
+    }
+  } else
+#endif
+  {
+    ZB_clear(c->zb,mask & GL_DEPTH_BUFFER_BIT,z,
+             mask & GL_COLOR_BUFFER_BIT,r,g,b);
+  }
 }
-
