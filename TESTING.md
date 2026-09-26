@@ -293,20 +293,21 @@ PPM pixel results for phases 21–23:
 
 | Phase | Non-black pixels | Center RGB | Evidence |
 |---|---:|---|---|
-| 21, source alpha 0.5 | 22,858 | `(128, 96, 0)` | red/green blend output |
-| 22, source alpha 0.25 | 22,858 | `(128, 96, 0)` | byte-identical to phase 21; alpha change did not affect pixels |
+| 21, source alpha 0.5 | 50,688 | `(128, 128, 0)` | red/green blend output |
+| 22, source alpha 0.25 | 50,688 | `(192, 64, 0)` | distinct output; less green contribution |
 | 23, blending disabled | 50,688 | `(0, 252, 0)` | opaque green covers red |
 
-A focused backend diagnostic confirmed source vertex alpha reaches PVR as 128
-for phase 21 and 64 for phase 22, with the requested `GL_SRC_ALPHA` /
-`GL_ONE_MINUS_SRC_ALPHA` factors. Blend enable changes the output, but the
-hardware result does not respond to the different alpha values. The diagnostic
-was removed; alpha-level behavior remains unresolved and this milestone is not
-complete.
+The baked-header diagnostic showed `m2.alpha=1` and vertex alpha bytes 128 and
+64 for P21 and P22, ruling out the initial vertex-alpha-header theory. The
+actual issue was that KOS `src_enable`/`dst_enable` select second accumulation
+buffers, not ordinary alpha-factor enables. Setting them to zero and
+submitting blend-enabled polygons through `PVR_LIST_TR_POLY` produced the
+expected distinct pixels. Opaque geometry remains on `PVR_LIST_OP_POLY`; when
+a scene first encounters blending, the backend closes the OP list and switches
+to TR. P17 remains black after this list arrangement.
 
 ## Next steps
 
-- Continue investigating why phases 21 and 22 produce identical pixels despite
-  different vertex alpha values. Once alpha behavior is verified, proceed to
-  work-order item 5 in `NEXT_TASKS.md` (alternate video modes / viewport sizing
-  and PVR submission error recovery).
+- Proceed to work-order item 5 in `NEXT_TASKS.md`: validate alternate video
+  modes and viewport sizing, then exercise PVR scene/list/primitive submission
+  error reporting and recovery.

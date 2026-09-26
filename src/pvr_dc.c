@@ -6,7 +6,8 @@
 #include <kos/cache.h>
 
 static const pvr_init_params_t tgl_pvr_params = {
-  { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_0,
+  /* Opaque geometry uses OP_POLY; blended geometry uses TR_POLY. */
+  { PVR_BINSIZE_16, PVR_BINSIZE_0, PVR_BINSIZE_16,
     PVR_BINSIZE_0, PVR_BINSIZE_0 },
   512 * 1024,
   0,  /* Direct submission. */
@@ -20,6 +21,7 @@ static pvr_poly_hdr_t tgl_pvr_header;
 static int tgl_pvr_initialized;
 static int tgl_pvr_scene_active;
 static int tgl_pvr_list_active;
+static pvr_list_t tgl_pvr_list_type;
 static int tgl_pvr_header_depth_test = -1;
 static int tgl_pvr_header_depth_func = -1;
 static int tgl_pvr_header_depth_write = -1;
@@ -134,7 +136,7 @@ static void tgl_pvr_update_header(GLContext *c) {
       tgl_pvr_header_blend_src == c->blend_src &&
       tgl_pvr_header_blend_dst == c->blend_dst) return;
 
-  pvr_poly_cxt_col(&context, PVR_LIST_OP_POLY);
+  pvr_poly_cxt_col(&context, blend_enabled ? PVR_LIST_TR_POLY : PVR_LIST_OP_POLY);
   context.gen.shading = PVR_SHADE_GOURAUD;
   context.gen.culling = PVR_CULLING_NONE;
   context.depth.comparison = c->depth_test ?
@@ -147,8 +149,9 @@ static void tgl_pvr_update_header(GLContext *c) {
   if (blend_enabled) {
     context.blend.src = tgl_pvr_blend_factor(c->blend_src);
     context.blend.dst = tgl_pvr_blend_factor(c->blend_dst);
-    context.blend.src_enable = 1;
-    context.blend.dst_enable = 1;
+    /* KOS maps these flags to the second accumulation buffers; keep them off. */
+    context.blend.src_enable = 0;
+    context.blend.dst_enable = 0;
   } else {
     context.blend.src = PVR_BLEND_ONE;
     context.blend.dst = PVR_BLEND_ZERO;
@@ -176,6 +179,24 @@ static void tgl_pvr_begin_scene(void) {
   }
   tgl_pvr_scene_active = 1;
   tgl_pvr_list_active = 1;
+  tgl_pvr_list_type = PVR_LIST_OP_POLY;
+}
+
+static void tgl_pvr_select_list(int blend_enabled) {
+  pvr_list_t wanted = blend_enabled ? PVR_LIST_TR_POLY : PVR_LIST_OP_POLY;
+
+  if (!tgl_pvr_scene_active || !tgl_pvr_list_active ||
+      wanted == tgl_pvr_list_type) return;
+
+  /* Lists cannot be reopened within a scene. Once a translucent primitive
+   * appears, subsequent primitives stay on TR until the next scene. */
+  if (tgl_pvr_list_type == PVR_LIST_TR_POLY) return;
+  if (pvr_list_finish() < 0 || pvr_list_begin(wanted) < 0) {
+    fprintf(stderr, "TinyGL PVR: list transition failed\n");
+    tgl_pvr_list_active = 0;
+    return;
+  }
+  tgl_pvr_list_type = wanted;
 }
 
 /* Load the current texture into VRAM (twiddled RGB565), caching by pixmap
@@ -224,14 +245,15 @@ static void tgl_pvr_update_txr_header(GLContext *c) {
   /* cxt_txr sets the blend factors to a source-only default, so override the
    * context after cxt_txr and before compile so the baked-in header matches
    * TinyGL's blend state. */
-  pvr_poly_cxt_txr(&context, PVR_LIST_OP_POLY, PVR_TXRFMT_RGB565,
+  pvr_poly_cxt_txr(&context, blend_enabled ? PVR_LIST_TR_POLY : PVR_LIST_OP_POLY, PVR_TXRFMT_RGB565,
                    256, 256, tgl_pvr_texture_load(c), PVR_FILTER_NEAREST);
   context.gen.alpha = blend_enabled;
   if (blend_enabled) {
     context.blend.src = tgl_pvr_blend_factor(c->blend_src);
     context.blend.dst = tgl_pvr_blend_factor(c->blend_dst);
-    context.blend.src_enable = 1;
-    context.blend.dst_enable = 1;
+    /* KOS maps these flags to the second accumulation buffers; keep them off. */
+    context.blend.src_enable = 0;
+    context.blend.dst_enable = 0;
   } else {
     context.blend.src = PVR_BLEND_ONE;
     context.blend.dst = PVR_BLEND_ZERO;
@@ -267,6 +289,8 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
 
   tgl_pvr_begin_scene();
   if (!tgl_pvr_scene_active) return;
+  tgl_pvr_select_list(c->blend_enabled);
+  if (!tgl_pvr_list_active) return;
 
   /* Textured path only when a texture is enabled AND its pixmap is actually
    * present. If the pixmap is missing (e.g. the texture image was never

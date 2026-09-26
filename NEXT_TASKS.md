@@ -36,9 +36,8 @@ The backend currently has these known gaps:
   background on no-op frames so culled/no-op phases render black.
 - GL depth function, vertex depth, and depth write mask are mapped to PVR state
   and tested on hardware (see `TESTING.md`).
-- GL blend modes are mapped to PVR state and hardware-tested, but the
-  different per-vertex alpha levels in smoke phases 21/22 produce identical
-  pixels; alpha-dependent blending remains unresolved (see `TESTING.md`).
+- GL blend modes and per-vertex alpha are hardware-tested for the supported
+  SRC_ALPHA/ONE_MINUS_SRC_ALPHA case (see `TESTING.md`).
   Unsupported GL blend factors
   (`GL_SRC_COLOR`, `GL_ONE_MINUS_SRC_COLOR`, `GL_SRC_ALPHA_SATURATE`) fall back
   to a source-only factor; non-`GL_FUNC_ADD` blend equations and
@@ -85,19 +84,21 @@ The backend currently has these known gaps:
      RGB format, non-256 size, non-REPEAT wrap, GL_MODULATE env, and
      mipmaps are all `gl_fatal_error`/unhandled in TinyGL. The smoke test uses
      only RGB 256x256 REPEAT, which is supported.
-4. **Implement and test supported blend modes and alpha handling — IN
-   PROGRESS.** TinyGL now tracks blend state
+4. ~~Implement and test supported blend modes and alpha handling.~~ **DONE
+   (2026-09-26).** TinyGL tracks blend state
    (`GLContext.blend_enabled/src/dst`, `OP_BlendFunc`, `GLBlendFunc`,
    `glopBlendFunc`, `GL_BLEND` enable) and maps GL factors to `pvr_blend_mode_t`
    in `src/pvr_dc.c`. The solid and textured header caches rebuild on blend
-   change and enable vertex-color alpha. Smoke phases 21–23 test over-blend at
-   alpha 0.5 and 0.25 and blend-disabled. Built clean and ran on KOS 2.3.0,
-   640x480 VGA. Hardware PPMs show blend output, but phases 21 and 22 are
-   byte-identical despite diagnostic confirmation that vertex alpha reaches
-   the backend as 128 and 64. Fix/test alpha-dependent blending before marking
-   this complete. The `glBlendFunc` parameter array overflow and smoke
+   change and enable vertex-color alpha. Smoke phases 21–23 test alpha 0.5,
+   alpha 0.25, and blending disabled. Hardware captures confirm distinct
+   outputs: P21 center `(128,128,0)`, P22 `(192,64,0)`, P23 `(0,252,0)`;
+   P17 depth NEVER remains black. The root cause was using translucent
+   accumulation-buffer enable flags as ordinary blend enables, combined with
+   submitting blended primitives through the opaque list. Those flags are
+   now off; opaque geometry uses OP and the scene transitions once to TR when
+   blending begins. The `glBlendFunc` parameter-array overflow and smoke
    frame-limit omission found during verification are fixed. Unsupported GL
-   factors and non-`GL_FUNC_ADD` equations are documented as unsupported.
+   factors and non-`GL_FUNC_ADD` equations remain documented as unsupported.
 5. Validate initialization and viewport sizing with alternate KOS video modes,
    and improve recovery/reporting for PVR scene/list/primitive submission errors.
 

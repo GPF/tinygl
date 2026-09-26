@@ -6,11 +6,11 @@ emulator image does not prove the PVR path is correct.
 
 ## Objective
 
-Continue with the in-progress blend/alpha item in `NEXT_TASKS.md`. Hardware
-phases 21 and 22 currently produce byte-identical pixels even though vertex
-alpha reaches the backend as 128 and 64. Diagnose this before moving to the
-later viewport/error-recovery work. Inspect TinyGL's blend state and installed
-KOS PVR APIs; keep unsupported behavior explicit rather than faking support.
+Continue with work-order item 5 in `NEXT_TASKS.md`: validate alternate KOS
+video modes and viewport sizing, then investigate PVR scene/list/primitive
+submission error reporting and recovery. Blend and alpha behavior is already
+hardware-verified; its confirmed implementation and test results are recorded
+below and in `TESTING.md`.
 
 The existing smoke test covers solid fill, Gouraud colors, a modelview
 transform, clipping, culling, polygon-mode behavior, depth state, and texture
@@ -113,12 +113,15 @@ mark hardware validation as pending, and give the exact command needed to run
 it. Do not claim blend or alpha behavior passed without inspecting the captured
 pixels.
 
-The blend milestone (work-order item 4) has state plumbing and PVR header
-mapping in `src/zgl.h`, `src/opinfo.h`, `src/api.c`, `src/misc.c`,
-`src/pvr_dc.c`, and `include/GL/gl.h`. P21–P23 have been run on hardware, but
-P21 and P22 are byte-identical despite distinct alpha values reaching PVR.
-Investigate the header/list/vertex alpha path and make the smallest targeted
-fix, then rebuild, rerun the 23-phase test, and inspect the captured pixels.
+Blend milestone (work-order item 4) is complete and hardware-verified. P21
+(alpha 0.5) captures center `(128,128,0)` and P22 (alpha 0.25) captures
+`(192,64,0)`; P23 is opaque green `(0,252,0)`, and P17 (`GL_NEVER`) remains
+black. The root cause was KOS accumulation-buffer enable bits being used as
+ordinary blend enables, plus blend primitives submitted through OP. Those bits
+are zero; opaque geometry uses OP and the backend transitions once to TR when
+blending starts. Continue with work-order item 5 in `NEXT_TASKS.md` (alternate
+video modes/viewport sizing and PVR submission error recovery). Do not edit
+SDL2; it is reference-only. Keep hardware captures as the final authority.
 
 ## Completion checklist
 
