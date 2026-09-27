@@ -186,18 +186,47 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
      default is not a reliable test. KOS could not create the `/pc/...` PPM
      screenshots, so this run verifies mode selection from the log, not visible
      rendering. Real non-VGA hardware validation remains useful.
-6. **Complete the PVR triangle-strip performance comparison.** The TinyGL
-   port is in `tests/dreamcast/pvrmark_strips/`; repeat its hardware A/B runs
-   with SH4ZAM enabled and disabled, then run KOS's unmodified
-   `pvrmark_strips_direct` and compare threshold FPS/stage timings with TinyGL
-   and GLdc's `pvrmark_strips_gldc`. Profile before expanding SH4ZAM use.
-   A gated native PVR strip path is implemented for eligible `GL_TRIANGLE_STRIP`
-   blocks. It buffers transformed vertices until `glEnd`; fill, unlit, uncullled,
-   unclipped strips use one PVR header and one EOL, while ineligible strips
-   replay the original parity-ordered triangle route. Ordinary `GL_TRIANGLES`
-   behavior is unchanged. See `docs/strip_fast_path_investigation.md` for the
-   design and hardware validation matrix. Real Dreamcast pixel comparison and
-   matched benchmark runs remain pending; do not claim a performance gain yet.
+6. ~~Complete the PVR triangle-strip performance comparison.~~ **DONE
+   (2026-09-27)** for the numeric comparison; the visual-equivalence check
+   remains open (see below). Collected 5 alternating hardware A/B runs of
+   `tests/dreamcast/pvrmark_strips/` (SH4ZAM on/off) plus one reference run
+   each of KOS's unmodified `pvrmark_strips_direct` and GLdc's
+   `pvrmark_strips_gldc` (KOS 2.3.0, 640x480 VGA). Full numbers, stage
+   timings, and analysis are in `TESTING.md`'s "Full comparison (work-order
+   item 6, 2026-09-27)" section. Summary:
+   - SH4ZAM off: median 2,900 tri/frame, 55.82 fps, 161,879 tri/sec.
+   - SH4ZAM on: median 2,700 tri/frame, 57.95 fps, 156,898 tri/sec -- CPU
+     stage times dropped (as expected) but the search converged at a lower
+     triangle threshold, so median throughput was ~3% *lower* than SH4ZAM
+     off, not higher. Same "CPU win doesn't move the needle" pattern as
+     TinyBalls (item 7) on a workload that doesn't exercise SH4ZAM's
+     trig/normalize paths.
+   - KOS `pvrmark_strips_direct` (raw immediate-mode PVR, no GL API):
+     converged ~32x higher at 93,333 tri/frame, but oscillated between two
+     stable FPS bands (~43 and ~60 fps) at that load -- a vsync/frame-time
+     quantization edge, not noise. Ceiling reference only, not a like-for-like
+     comparison.
+   - GLdc `pvrmark_strips_gldc`: 2,783 tri/frame, 59.95 fps, 166,851 tri/sec
+     -- comparable triangle count to TinyGL, but its PVR registration stage
+     timed at ~4x faster than TinyGL's (3.3 ms vs 13.0-13.4 ms) despite
+     TinyGL's CPU-side stages being much closer (only ~3x GLdc's). This is a
+     new, concrete lead: real headroom appears to remain specifically in
+     TinyGL's PVR submission/registration path, not just its CPU-side
+     transform/build stages already addressed by the `sq_fast_cpy` batching
+     work and the native strip path. Worth its own follow-up investigation.
+   - **Still open:** the dedicated strip-vs-triangle hardware pixel
+     comparison (visual equivalence of the native strip path against the
+     `GL_TRIANGLES` fallback) has not been done. Do not claim the strip path
+     is visually correct across all cases from this benchmark data alone --
+     it only measures throughput, not pixel output.
+
+   Background: a gated native PVR strip path is implemented for eligible
+   `GL_TRIANGLE_STRIP` blocks. It buffers transformed vertices until `glEnd`;
+   fill, unlit, uncullled, unclipped strips use one PVR header and one EOL,
+   while ineligible strips replay the original parity-ordered triangle route.
+   Ordinary `GL_TRIANGLES` behavior is unchanged. See
+   `docs/strip_fast_path_investigation.md` for the design and hardware
+   validation matrix.
 7. **Repeat the TinyBalls SH4ZAM performance comparison.** The rotation
    breakup was fixed by enabling KOS's default three PVR OPB overflow blocks;
    six-sphere captures are visually correct in both variants. The first off/on
