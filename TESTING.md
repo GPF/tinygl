@@ -754,3 +754,78 @@ consistent with normal run-to-run gradient dithering/rasterizer noise, not a
 regression -- the pixel coverage and bounds match exactly and P18's quadrant
 colors (black/blue/white/red/green) are unchanged. Work-order item 9 is
 **DONE** and hardware-confirmed.
+
+## Lit triangle-strip investigation (work-order item 8, 2026-09-27)
+
+Investigation only -- the native PVR strip fast path (`tgl_pvr_draw_strip`,
+`src/pvr_dc.c`) stays gated off for lit geometry in normal builds
+(`src/vertex.c`'s `glopEnd()` eligibility check). A test-only override was
+added: build with `-DTGL_PVR_TEST_ALLOW_LIT_STRIP` to drop the
+`!c->lighting_enabled` eligibility clause and force lit strips through the
+native path (same pattern as `TGL_PVR_TEST_INJECT_FAIL`).
+
+**Negative control:** `tests/dreamcast/strip_lit_probe/` is a minimal
+isolated scene (a flat rectangular patch split into 4 lit
+`GL_TRIANGLE_STRIP` rows, mirroring the sphere-row structure) added to try
+to reproduce the artifact in a controlled setting. Built with the same
+`-DTGL_PVR_TEST_ALLOW_LIT_STRIP` override and run on hardware
+(640x480 VGA), its capture was byte-identical (0 pixel diff) to the
+per-triangle-fallback baseline -- this simple case does not reproduce the
+bug. The artifact needs the fuller TinyBalls scene (curved sphere geometry
+and/or multiple consecutive strip calls across several balls) to appear;
+keep this probe as a regression check once the real fix is found, and as a
+smaller repro to extend if the TinyBalls case proves hard to instrument
+further.
+
+**Reproduction (KOS 2.3.0, 640x480 VGA, `DC_IP=192.168.0.128`):**
+
+```bash
+source /opt/toolchains/dc/kos/environ.sh
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y \
+  EXTRA_CFLAGS=-DTGL_PVR_TEST_ALLOW_LIT_STRIP
+make -C tests/dreamcast/tinyballs clean all
+kos-tool -m /tmp -t 192.168.0.128 \
+  -x tests/dreamcast/tinyballs/tinygl-tinyballs.elf
+```
+
+At 12 balls (screenshot captured within the first 60 frames, before the
+FPS-search window evaluates at 5s), geometry-submit time dropped from the
+correct baseline's 88.9 ms to 62.6 ms/frame (~30% faster), and the
+FPS-search subsequently settled at 3 stable spheres at 60.09 FPS instead of
+the baseline's 2 -- confirming the expected performance win is real.
+
+The screenshot (`/tmp/tinyballs.ppm`, saved locally as
+`tinyballs_litstrip_12balls.ppm`, not committed) reproduced the previously
+reported artifact exactly: a thin line juts out to the right of 3 of the 12
+spheres, at roughly equator height, terminating in open space a short fixed
+distance from the sphere surface without connecting to anything else. The
+line's color interpolates smoothly (it is Gouraud-shaded, not a solid
+debug color), which points to one real mesh triangle with a single
+mis-positioned vertex rather than a PVR list/header transition glitch.
+
+**Batch-boundary hypothesis tested and ruled out.** Each sphere row strip
+has `(SPHERE_SLICES+1)*2 = 42` vertices with the normal `SPHERE_SLICES=20`,
+which crosses `tgl_pvr_draw_strip`'s `TGL_PVR_STRIP_BATCH=32` split into two
+`sq_fast_cpy()` calls -- a code path the earlier unlit-only strip
+validation never exercised (no unlit strip test used a >32-vertex row).
+Diagnostic: temporarily set `SPHERE_SLICES = 14` in
+`tests/dreamcast/tinyballs/main.c` (30 vertices/row, single un-split
+batch), rebuilt, and reran on hardware. If the batch split caused the
+artifact, it should have disappeared. **It did not.** Instead every sphere
+showed large scalloped "pac-man" wedges of missing geometry -- a worse and
+qualitatively different failure (`tinyballs_14slices_12balls.ppm`, not
+committed). This rules out `sq_fast_cpy` batch-chunking as the root cause;
+the local `main.c` edit was reverted before committing anything (`git diff`
+confirmed clean on `tests/dreamcast/tinyballs/main.c` afterward).
+
+**Status:** root cause still open. Next steps for whoever picks this up:
+binary-search `SPHERE_SLICES` between 14 and 20 to find the smallest count
+that reproduces the original thin-line artifact (rather than the worse
+wedge failure) to narrow which vertex index/parity triggers it; dump raw
+`pvr_vertex_t` values for one bad strip instead of relying on screenshots;
+and check whether the artifact vertex's position is stale data left over
+from the previous strip/ball's vertex buffer rather than a fresh
+computation for the current one. Do not re-enable the gate for
+non-diagnostic builds until a clean hardware screenshot is obtained at the
+real `SPHERE_SLICES=20`.

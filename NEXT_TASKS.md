@@ -206,7 +206,7 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
    and keep `bruces_balls` as a separate direct-PVR reference.
 
 8. **Extend the native PVR strip path (`tgl_pvr_draw_strip`) to lit
-   geometry -- currently broken, needs its own investigation.** TinyBalls
+   geometry -- currently broken, root cause still open.** TinyBalls
    profiling (`TINYGL_PROFILE_STAGES`, see
    `docs/dreamcast_gl_reference_notes.md`) found PVR submit is the largest
    untimed-savings bucket (~40ms/frame at 12 balls). `glopEnd()`'s strip
@@ -215,16 +215,58 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
    deferred ("out of slice 1"), not disqualified for a correctness reason,
    and `GLVertex.color` is already fully lit by the time `glopEnd()` runs
    (`gl_shade_vertex()` writes it in `glopVertex`, before `glopEnd`).
-   Tried dropping the `!c->lighting_enabled` clause on real hardware
-   (TinyBalls, SH4ZAM build): FPS jumped ~33% (6.45 -> 8.58 @ 12 balls) but
-   the screenshot showed stray thin connecting-line artifacts on 3 of 6
-   spheres that aren't present in the correct baseline. Reverted the gate;
-   confirmed the artifact disappears and rendering returns to correct.
-   Root cause not yet found -- something about consecutive
-   `tgl_pvr_draw_strip()` calls (separate rows, separate balls) breaks
-   under lit per-vertex colors that didn't show up in the original
-   unlit-only validation. Do not re-enable this gate without first getting
-   a clean hardware screenshot.
+
+   The gate is now toggleable for investigation only:
+   `src/vertex.c`'s eligibility check drops `!c->lighting_enabled` when
+   built with `-DTGL_PVR_TEST_ALLOW_LIT_STRIP` (same pattern as
+   `TGL_PVR_TEST_INJECT_FAIL`); normal builds are unaffected and the gate
+   stays on by default. Confirmed on hardware (2026-09-27, KOS 2.3.0,
+   640x480 VGA):
+
+   - **The performance win is real and large.** With the gate forced open,
+     TinyBalls' 12-ball geometry-submit time dropped from 88.9 ms to
+     62.6 ms/frame (~30% faster), and the FPS-search settled at 3 stable
+     spheres at 60.09 FPS instead of 2 -- a genuine improvement, not noise.
+   - **The artifact reproduces exactly as previously reported:** a thin
+     line juts out to the right of 3 of 12 spheres (captured at
+     `/tmp/tinyballs_litstrip_12balls.ppm` in this session; not committed).
+     It sits at roughly equator height, does not connect to any other
+     sphere, and terminates in open space a short, fixed distance from the
+     sphere surface -- consistent with one real triangle in the mesh
+     having a single mis-positioned vertex (a Gouraud-shaded sliver, not a
+     rendering/list-transition glitch, since colors interpolate correctly
+     along it).
+   - **The `sq_fast_cpy` 32-vertex batch boundary is ruled out as the
+     cause.** Each sphere row strip is 42 vertices (`(SPHERE_SLICES+1)*2`
+     with `SPHERE_SLICES=20`), which crosses `tgl_pvr_draw_strip`'s
+     `TGL_PVR_STRIP_BATCH=32` split into two `sq_fast_cpy()` calls -- a
+     configuration never exercised by the earlier unlit-only strip
+     validation (unlit strips never reached this code path with a
+     >32-vertex row). Diagnostic: temporarily reduced `SPHERE_SLICES` to
+     14 (30 vertices/row, one single un-split batch) and reran on
+     hardware. If the batch split were the cause, the artifact should have
+     disappeared. **It did not** -- instead, at 14 slices every sphere
+     showed large scalloped/"pac-man" wedges of missing geometry, a
+     visibly worse and different failure mode (captured at
+     `/tmp/tinyballs_14slices_12balls.ppm`, not committed; this was a
+     throwaway local edit to `tests/dreamcast/tinyballs/main.c`, reverted
+     before committing). This means the bug is not in the `sq_fast_cpy`
+     batch-chunking mechanism itself, and is more likely in how per-vertex
+     Gouraud color/position data interacts with the native PVR strip
+     submission for the specific vertex stream a lit sphere row produces
+     (e.g. a stale or wrongly-indexed `GLVertex` entry, or a normal/lit
+     color computed from unreplaced state for one strip vertex).
+   - **Not yet tried:** binary-searching `SPHERE_SLICES` between 14 and 20
+     to find the smallest count that still reproduces the *original* thin
+     line (rather than the worse wedge failure), which would narrow which
+     vertex index/parity triggers it; dumping raw `pvr_vertex_t` values for
+     one bad strip instead of only screenshot inspection; and checking
+     whether the artifact vertex's position is a stale value from the
+     *previous* strip/ball's vertex buffer rather than a fresh computation.
+
+   Do not re-enable this gate for non-diagnostic builds until a clean
+   hardware screenshot is obtained across the full `SPHERE_SLICES` range
+   used by TinyBalls (20).
 9. ~~`sq_fast_cpy` vertex-submission batching for textured triangles.~~
    **DONE (2026-09-27).** `tgl_pvr_draw_triangle`'s untextured path and
    `tgl_pvr_draw_strip` already built their `pvr_vertex_t` entries into a

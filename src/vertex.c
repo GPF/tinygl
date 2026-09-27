@@ -458,8 +458,11 @@ void glopEnd(GLContext * c, GLParam * param)
 	int eligible = c->polygon_mode_front == GL_FILL &&
 	               c->polygon_mode_back == GL_FILL &&
 	               c->render_mode == GL_RENDER &&
-	               !c->cull_face_enabled && c->pvr_backend &&
-	               !c->lighting_enabled;
+	               !c->cull_face_enabled && c->pvr_backend
+#ifndef TGL_PVR_TEST_ALLOW_LIT_STRIP
+	               && !c->lighting_enabled
+#endif
+	               ;
 
 	for (i = 0; eligible && i < c->vertex_cnt; ++i) {
 	    if (c->vertex[i].clip_code != 0) eligible = 0;
