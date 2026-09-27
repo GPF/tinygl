@@ -205,23 +205,33 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
    time with SH4ZAM. Collect at least five alternating runs, compare medians,
    and keep `bruces_balls` as a separate direct-PVR reference.
 
-8. **Extend the native PVR strip path (`tgl_pvr_draw_strip`) to lit
-   geometry -- currently broken, root cause still open.** TinyBalls
-   profiling (`TINYGL_PROFILE_STAGES`, see
+8. ~~Extend the native PVR strip path (`tgl_pvr_draw_strip`) to lit
+   geometry.~~ **DONE (2026-09-27).** Root cause found and fixed (see
+   below); `src/vertex.c`'s `glopEnd()` eligibility check no longer
+   excludes `lighting_enabled` -- lit strips use the native PVR strip path
+   unconditionally now, in normal builds, no test flag required. Verified
+   clean on hardware at the exact original repro condition: TinyBalls
+   forced to 12 balls (`-DTINYBALLS_SEARCH_DELAY=20` so the FPS search
+   doesn't drop the ball count before the frame-60 capture), default build
+   (`TINYGL_USE_DREAMCAST_PVR=y`, lighting enabled, no test flags). The
+   capture shows all 12 spheres with clean silhouettes; a full-frame pixel
+   scan for isolated thin runs (the same scan that caught the original
+   line) found zero matches. The full 24-phase `pvr_smoke` suite also
+   still passes with no submission errors after this change.
+
+   Background: TinyBalls profiling (`TINYGL_PROFILE_STAGES`, see
    `docs/dreamcast_gl_reference_notes.md`) found PVR submit is the largest
    untimed-savings bucket (~40ms/frame at 12 balls). `glopEnd()`'s strip
-   eligibility gate (`src/vertex.c`) excludes `lighting_enabled` --
+   eligibility gate (`src/vertex.c`) excluded `lighting_enabled` --
    `docs/strip_fast_path_investigation.md` says this was deliberately
    deferred ("out of slice 1"), not disqualified for a correctness reason,
    and `GLVertex.color` is already fully lit by the time `glopEnd()` runs
    (`gl_shade_vertex()` writes it in `glopVertex`, before `glopEnd`).
 
-   The gate is now toggleable for investigation only:
-   `src/vertex.c`'s eligibility check drops `!c->lighting_enabled` when
-   built with `-DTGL_PVR_TEST_ALLOW_LIT_STRIP` (same pattern as
-   `TGL_PVR_TEST_INJECT_FAIL`); normal builds are unaffected and the gate
-   stays on by default. Confirmed on hardware (2026-09-27, KOS 2.3.0,
-   640x480 VGA):
+   The gate was made toggleable for investigation first (build with
+   `-DTGL_PVR_TEST_ALLOW_LIT_STRIP`, same pattern as
+   `TGL_PVR_TEST_INJECT_FAIL`) before being promoted to the default above.
+   Investigation history (2026-09-27, KOS 2.3.0, 640x480 VGA):
 
    - **The performance win is real and large.** With the gate forced open,
      TinyBalls' 12-ball geometry-submit time dropped from 88.9 ms to
@@ -359,9 +369,11 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
      directly disproven either -- only superseded by a simpler, confirmed
      explanation.
 
-   Do not re-enable this gate for non-diagnostic builds until a clean
-   hardware screenshot is obtained across the full `SPHERE_SLICES` range
-   used by TinyBalls (20).
+   **Resolution (2026-09-27):** the gate is removed; lit strips are
+   eligible by default (see the DONE note at the top of this item). Clean
+   hardware screenshots were obtained at the full `SPHERE_SLICES` range
+   used by TinyBalls (20), at both the original default ball count and a
+   forced 12-ball capture matching the original repro.
 9. ~~`sq_fast_cpy` vertex-submission batching for textured triangles.~~
    **DONE (2026-09-27).** `tgl_pvr_draw_triangle`'s untextured path and
    `tgl_pvr_draw_strip` already built their `pvr_vertex_t` entries into a

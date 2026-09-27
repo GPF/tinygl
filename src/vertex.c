@@ -455,14 +455,15 @@ void glopEnd(GLContext * c, GLParam * param)
 #ifdef TINYGL_USE_DREAMCAST_PVR
     if (c->begin_type == GL_TRIANGLE_STRIP && c->vertex_cnt >= 3) {
 	int i;
+	/* Lit strips were excluded here pending investigation of a stray-line
+	 * artifact (NEXT_TASKS.md item 8); root-caused to near-zero-area
+	 * triangles at a UV-sphere's collapsed pole ring (a mesh-generation
+	 * issue in the TinyBalls test, not a strip-path correctness bug) and
+	 * fixed there. Lit strips are eligible unconditionally now. */
 	int eligible = c->polygon_mode_front == GL_FILL &&
 	               c->polygon_mode_back == GL_FILL &&
 	               c->render_mode == GL_RENDER &&
-	               !c->cull_face_enabled && c->pvr_backend
-#ifndef TGL_PVR_TEST_ALLOW_LIT_STRIP
-	               && !c->lighting_enabled
-#endif
-	               ;
+	               !c->cull_face_enabled && c->pvr_backend;
 
 	for (i = 0; eligible && i < c->vertex_cnt; ++i) {
 	    if (c->vertex[i].clip_code != 0) eligible = 0;

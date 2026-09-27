@@ -762,12 +762,26 @@ colors (black/blue/white/red/green) are unchanged. Work-order item 9 is
 
 ## Lit triangle-strip investigation (work-order item 8, 2026-09-27)
 
-Investigation only -- the native PVR strip fast path (`tgl_pvr_draw_strip`,
-`src/pvr_dc.c`) stays gated off for lit geometry in normal builds
-(`src/vertex.c`'s `glopEnd()` eligibility check). A test-only override was
-added: build with `-DTGL_PVR_TEST_ALLOW_LIT_STRIP` to drop the
-`!c->lighting_enabled` eligibility clause and force lit strips through the
-native path (same pattern as `TGL_PVR_TEST_INJECT_FAIL`).
+**Resolved and DONE.** The native PVR strip fast path (`tgl_pvr_draw_strip`,
+`src/pvr_dc.c`) is now eligible for lit geometry unconditionally --
+`src/vertex.c`'s `glopEnd()` eligibility check no longer excludes
+`lighting_enabled`, in normal builds, no test flag required. The stray-line
+artifact that originally motivated gating lit strips off was root-caused to
+near-zero-area triangles at a UV-sphere's collapsed pole ring in the
+TinyBalls test mesh (fixed by drawing the poles as a `GL_TRIANGLE_FAN`; see
+`NEXT_TASKS.md` item 8), not a defect in the strip path itself. Re-verified
+clean on hardware at the exact original repro condition (TinyBalls forced to
+12 balls via `-DTINYBALLS_SEARCH_DELAY=20`, default build, no test flags):
+all 12 spheres render with clean silhouettes, and a full-frame pixel scan for
+isolated thin runs found zero matches. The 24-phase `pvr_smoke` suite also
+still passes with no submission errors.
+
+The investigation history below (test-only override, negative control,
+per-triangle vertex dumps) is kept for context; the
+`-DTGL_PVR_TEST_ALLOW_LIT_STRIP` build flag referenced in it is now a no-op
+(the eligibility check it used to modify no longer exists), left in place
+only because `tests/dreamcast/strip_lit_probe/` still references it in a
+comment.
 
 **Negative control:** `tests/dreamcast/strip_lit_probe/` is a minimal
 isolated scene (a flat rectangular patch split into 4 lit
