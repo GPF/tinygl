@@ -187,25 +187,29 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
      screenshots, so this run verifies mode selection from the log, not visible
      rendering. Real non-VGA hardware validation remains useful.
 6. **Complete the PVR triangle-strip performance comparison.** Data
-   collected (2026-09-27); **the SH4ZAM-off result below did not reproduce
-   across three same-day sessions** (2,900 -> 2,300 -> 1,900 tri/frame
-   median, monotonically decreasing). A third set run with the benchmark's
-   periodic stage-timing `printf`s suppressed
-   (`-DPVRMARK_QUIET_STAGE_PRINTF`) ruled out console-print latency as the
-   cause -- it produced the *lowest* median yet (1,900), and its own 5
-   runs showed a monotonic within-set drift (2700,2500,1900,1900,1900)
-   rather than random scatter, settling to a bit-identical cluster. This
-   looks like cumulative thermal/console-state drift from many consecutive
-   hardware runs without a power cycle, not a code or measurement-timing
-   issue -- the binary was identical (verified) across all three sessions.
-   Full detail and the recommended controlled-measurement protocol
-   (power-cycle before each session, fixed warm-up, treat the
-   run-to-run-identical tail as the reading) are in `TESTING.md`'s
-   "Correction: the SH4ZAM-off result above is not stable across sessions"
-   note and its printf-latency follow-up. **Do not cite the numbers below
-   as settled** until re-measured under that protocol; the
-   visual-equivalence check also remains open (see below). Original
-   (unconfirmed) 5 alternating hardware A/B runs of
+   collected (2026-09-27) across 4 same-day sessions (25 total runs) shows
+   TinyGL's SH4ZAM-off result on `pvrmark_strips` is **not a stable single
+   number, and no further hardware runs of the current design will fix
+   that.** Four hypotheses were tested and ruled out in turn: bimodal
+   session variance (2,900 -> 2,300 -> 1,900 tri/frame across 3 sessions),
+   console-print latency (`-DPVRMARK_QUIET_STAGE_PRINTF` suppressed all
+   periodic prints; made the median *lower*, not more stable), and thermal
+   drift settling to a floor (a 10-run set collected immediately after a
+   full power cycle bounced between 1,900/2,500/2,700/3,300 tri/frame --
+   *wider* spread than any prior session, not narrower). Full detail in
+   `TESTING.md`'s "Correction..." section and its two same-day follow-ups.
+   **Root cause: the benchmark's own search design.** `check_switch()`'s
+   `PHASE_DECR` step stops the instant one 5-second `avgfps` average
+   happens to read >=55, with a coarse `DECREMENT_POLY_COUNT = 200` step --
+   so the reported "threshold" is wherever a noisy 5-second measurement
+   window first crosses the target, not a stable hardware property. This
+   is a benchmark-methodology limitation, not a TinyGL, SH4ZAM, or console
+   issue. **Do not add more 5-or-10-run sets under the current design**;
+   a real fix needs either much longer per-candidate averaging windows or
+   reporting average FPS at fixed triangle counts instead of trusting the
+   search's self-selected stopping point. The visual-equivalence check
+   below remains open regardless. Original (now-superseded) 5 alternating
+   hardware A/B runs of
    `tests/dreamcast/pvrmark_strips/` (SH4ZAM on/off) plus one reference run
    each of KOS's unmodified `pvrmark_strips_direct` and GLdc's
    `pvrmark_strips_gldc` (KOS 2.3.0, 640x480 VGA). Full numbers, stage

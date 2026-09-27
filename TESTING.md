@@ -254,17 +254,43 @@ drift from many consecutive hardware runs without a power cycle, not
 measurement noise and not a code-path difference (the binary was identical
 across all three sessions).
 
-**Practical implication:** treat every number in this section (both
-SH4ZAM variants, the GLdc comparison, and this quiet-mode set) as
-provisional until re-measured under a controlled protocol: power-cycle
-the console before each fresh set of runs (not just between builds), let
-it idle for a fixed warm-up period, and take the first stable
-run-to-run-identical cluster within a set as the reading for that
-session -- e.g. this set's true converged value is arguably 1,900 (the
-reproducible tail), with runs 1-2 being transient settling, not 3
-independent samples of the same distribution. Collecting 10-15 runs in
-one already-warmed-up, freshly power-cycled session is a stronger next
-step than more runs under today's drifting conditions.
+**Follow-up (same day): power cycle does NOT fix it -- the "settling"
+theory above was wrong.** Ten runs were collected immediately after a full
+console power cycle (same quiet-mode binary): 3300, 2500, 1900, 1900,
+2500, 1900, 2700, 2500, 2700, 2700 tri/frame (55.12-55.95 fps, 106,298-
+181,887 tri/sec). This flatly contradicts the "monotonic drift settling to
+a floor" read of the earlier quiet-mode set: run 5 bounced back up to
+2,500 after two runs at 1,900, and run 7 climbed to 2,700 after that --
+this is oscillation between a handful of discrete values (1,900 / 2,500 /
+2,700 / 3,300, each ~200-600 apart), not a one-way thermal ramp. Sorted:
+1900 x3, 2500 x3, 2700 x3, 3300 x1 -- median 2,500 tri/frame, 55.82 fps,
+139,551 tri/sec. The full range (1,900-3,300, a 74% spread) is *wider*
+than either session collected before the power cycle, not narrower, so
+power-cycling did not stabilize anything either.
+
+**Actual conclusion:** across all 4 sessions collected today (25 runs
+total, spanning prints-on, prints-off, warm, and freshly-power-cycled
+conditions), results land on a discrete, evenly-spread set of values from
+1,900 to 3,300 tri/frame with no single session's median being obviously
+more "correct" than another's. This is best explained by the search
+algorithm's own coarse decrement step (`DECREMENT_POLY_COUNT = 200`)
+combined with real run-to-run noise in the 5-second `avgfps` measurement
+window near the 55 fps target: `PHASE_DECR` stops the moment one 5-second
+average happens to read >=55, so the reported "threshold" is wherever that
+noisy measurement first crosses the line, not a stable property of the
+hardware. Console thermal state, print latency, and cumulative session
+drift were all tested and are not the primary driver -- this looks like
+an inherent limitation of the benchmark's own search methodology, not a
+console or TinyGL behavior worth chasing further with more runs of the
+same design.
+
+**Recommendation for anyone revisiting this:** don't add more 5-or-10-run
+sets under the current search design; it will keep landing on different
+discrete values indefinitely. A meaningful fix would be to average FPS
+over many more seconds per candidate load (finer than the current 5s
+window) and/or pick a handful of *fixed* triangle counts and report
+their average FPS across many runs, rather than trusting a fast search's
+self-selected stopping point as a single number.
 
 ## Dreamcast TinyBalls math stress scene
 
