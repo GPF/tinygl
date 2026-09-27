@@ -33,6 +33,14 @@ static int tgl_pvr_header_blend_dst = -1;
 #ifdef TGL_PVR_TEST_DUMP_STRIP
 static unsigned int tgl_pvr_debug_strip_id;
 #endif
+#ifdef TGL_PVR_TEST_DUMP_STRIP_TRI_ALL
+static int tgl_pvr_debug_frame_counter;
+static int tgl_pvr_debug_dump_frame = -1;
+
+void tgl_pvr_test_set_dump_frame(int frame) {
+  tgl_pvr_debug_dump_frame = frame;
+}
+#endif
 
 /* Textured-triangle support.
  *
@@ -571,6 +579,24 @@ void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
     }
   }
 #endif
+#ifdef TGL_PVR_TEST_DUMP_STRIP_TRI_ALL
+  /* Unconditional per-triangle dump, gated to the exact application frame
+   * the caller armed via tgl_pvr_test_set_dump_frame() (tgl_pvr_flush()
+   * advances tgl_pvr_debug_frame_counter once per frame). No thin/small-
+   * area heuristic -- print every triangle in every strip call so the true
+   * offending vertex can be found directly instead of guessed at through a
+   * filter or a call-count window. */
+  if (tgl_pvr_debug_frame_counter == tgl_pvr_debug_dump_frame) {
+    for (i = 0; i + 2 < count; ++i) {
+      int x0 = vertices[i].zp.x, y0 = vertices[i].zp.y;
+      int x1 = vertices[i + 1].zp.x, y1 = vertices[i + 1].zp.y;
+      int x2 = vertices[i + 2].zp.x, y2 = vertices[i + 2].zp.y;
+      printf("ALLTRI FRAME %d CALL %p TRI %d: (%d,%d) (%d,%d) (%d,%d)\n",
+             tgl_pvr_debug_frame_counter, (void *)vertices, i, x0, y0, x1, y1,
+             x2, y2);
+    }
+  }
+#endif
   tgl_pvr_begin_scene();
   if (!tgl_pvr_scene_active) return;
   tgl_pvr_select_list(c->blend_enabled);
@@ -589,6 +615,64 @@ void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
     return;
   }
 
+#ifdef TGL_PVR_TEST_STRIP_AS_TRIANGLES
+  /* Diagnostic for the lit-strip artifact (NEXT_TASKS.md item 8): submit the
+   * same prevalidated vertices, under the same header/list/blend state, as
+   * standalone EOL-terminated triangles instead of one continuous TA strip.
+   * Winding is re-parity'd exactly like the strip (odd triangles reversed)
+   * so each triangle matches what the strip would have rasterized. If the
+   * artifact disappears here, it is specific to strip topology/raster
+   * interpretation rather than to header or blend state. */
+  for (i = 0; i + 2 < count; ++i) {
+    pvr_vertex_t tri[3];
+    int i0 = i, i1 = i + 1, i2 = i + 2;
+#ifndef TGL_PVR_TEST_STRIP_NO_PARITY_SWAP
+    if (i & 1) { int t = i1; i1 = i2; i2 = t; }
+#endif
+
+#ifdef TGL_PVR_TEST_DUMP_STRIP_TRI
+    {
+      int x0 = vertices[i0].zp.x, y0 = vertices[i0].zp.y;
+      int x1 = vertices[i1].zp.x, y1 = vertices[i1].zp.y;
+      int x2 = vertices[i2].zp.x, y2 = vertices[i2].zp.y;
+      int area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+      int e0 = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
+      int e1 = (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1);
+      int e2 = (x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2);
+      int longest = e0 > e1 ? e0 : e1;
+      long long area_sq;
+      if (e2 > longest) longest = e2;
+      /* Thin-sliver test independent of absolute length: since
+       * cross-product `area` = base * height (base = longest edge),
+       * height^2 = area^2 / longest_edge_sq. Flags triangles narrower than
+       * ~4px along a base longer than ~20px -- catches long thin slivers
+       * the old |area|<=64 bound missed (that bound only caught SMALL
+       * triangles, not long-and-thin ones). */
+      area_sq = (long long)area * (long long)area;
+      if (longest > 400 && area_sq < 16LL * (long long)longest) {
+        printf("STRIPTRI TRI %d (i0=%d i1=%d i2=%d): area=%d longest_sq=%d "
+               "(%d,%d) (%d,%d) (%d,%d)\n",
+               i, i0, i1, i2, area, longest, x0, y0, x1, y1, x2, y2);
+      }
+    }
+#endif
+
+    tgl_pvr_set_vertex(&tri[0], &vertices[i0], (float)vertices[i0].zp.x,
+                        (float)vertices[i0].zp.y, 0);
+    tgl_pvr_set_vertex(&tri[1], &vertices[i1], (float)vertices[i1].zp.x,
+                        (float)vertices[i1].zp.y, 0);
+    tgl_pvr_set_vertex(&tri[2], &vertices[i2], (float)vertices[i2].zp.x,
+                        (float)vertices[i2].zp.y, 1);
+    if (textured) {
+      tri[0].u = vertices[i0].tex_coord.X; tri[0].v = vertices[i0].tex_coord.Y;
+      tri[1].u = vertices[i1].tex_coord.X; tri[1].v = vertices[i1].tex_coord.Y;
+      tri[2].u = vertices[i2].tex_coord.X; tri[2].v = vertices[i2].tex_coord.Y;
+      tri[0].argb = tri[1].argb = tri[2].argb = 0xFFFFFFFF;
+    }
+    sq_fast_cpy(SQ_MASK_DEST(PVR_TA_INPUT), tri, 3);
+  }
+  return;
+#endif
   /* Push vertices to the TA in fixed-size batches via one sq_fast_cpy() per
    * batch instead of one pvr_prim() (== one sq_fast_cpy()) call per vertex.
    * Safe: pvr_list_begin() already holds the SQ lock for the whole list
@@ -638,6 +722,9 @@ void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
 }
 
 void tgl_pvr_flush(void) {
+#ifdef TGL_PVR_TEST_DUMP_STRIP_TRI_ALL
+  ++tgl_pvr_debug_frame_counter;
+#endif
   if (tgl_pvr_list_active) {
     if (pvr_list_finish() < 0) {
       tgl_pvr_submission_errors++;

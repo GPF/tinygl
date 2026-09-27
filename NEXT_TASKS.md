@@ -252,11 +252,77 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
      printed no matches for the captured rotation. This weakens the stale
      or malformed input-vertex theory, but does not rule out a PVR-side
      interpretation issue. The per-triangle fallback remains visually clean.
-   - **Next:** submit the same vertices as explicit PVR triangles with the
-     same polygon state, then make a controlled strip vertex-order change.
-     This should separate strip topology effects from other state/submission
-     differences. The leading hypothesis is PVR strip topology or raster
-     interpretation; root cause remains unproven.
+   - **Triangle-list diagnostic (2026-09-27, KOS 2.3.0, 640x480 VGA,
+     1 ball, lighting disabled, `TGL_PVR_TEST_STRIP_AS_TRIANGLES`):**
+     `tgl_pvr_draw_strip()` (`src/pvr_dc.c`) now has a build-time diagnostic
+     that submits the same prevalidated strip vertices, under the identical
+     header/list/blend state, as standalone EOL-terminated triangles with
+     strip-matching winding parity, instead of one continuous TA strip.
+     The artifact **did not disappear** -- it reproduced as two thin
+     horizontal lines flanking the sphere near the equator (capture at
+     `/tmp/claude-1000/.../scratchpad/striptri_060_crop.png` in this
+     session; not committed), versus the single line previously reported
+     for the native-strip path. This weakens the "PVR strip topology/raster
+     interpretation" hypothesis: the same lines/near-lines appear even when
+     the hardware never sees a multi-vertex strip primitive. It does not
+     yet rule strip topology out cleanly, because the diagnostic's
+     triangle-order parity swap (reversing every other triangle to match
+     strip winding) is unverified against the original strip's exact vertex
+     order and could itself be introducing a second, distinct sliver.
+   - **Parity-swap re-test (2026-09-27):** re-ran the triangle-list
+     diagnostic with the winding-parity swap removed
+     (`TGL_PVR_TEST_STRIP_NO_PARITY_SWAP`, submitting `i, i+1, i+2`
+     unconditionally). The result was pixel-identical to the parity-swapped
+     version (same two lines, same position), so the diagnostic's own
+     winding logic is not the cause of the double-line difference from the
+     native-strip capture -- something about triangle-list *decomposition
+     itself* (breaking one continuous strip into independent 3-vertex
+     primitives) changes the render versus native strip mode, independent
+     of vertex order. Re-running the **native** strip path (no
+     decomposition) with a full 12-ball frame reproduced the original
+     single-line-per-sphere symptom, confirming the double-line was an
+     artifact of the decomposition diagnostic, not a second real bug.
+   - **Exact-frame vertex dump (2026-09-27):** the `-DTGL_PVR_TEST_DUMP_STRIP`
+     window-based capture (strip_id 1180-1199) never contained a match
+     because that window's strip-id-to-frame arithmetic was a guess, not a
+     real frame number. Replaced it with a real hook:
+     `tgl_pvr_test_set_dump_frame(int)` (declared in `src/zgl.h`, gated by
+     `-DTGL_PVR_TEST_DUMP_STRIP_TRI_ALL`) arms an exact target against a
+     counter `tgl_pvr_flush()` advances once per application frame; the
+     test caller (`tests/dreamcast/tinyballs/main.c`) arms it once at
+     startup. This requires `-DTGL_PVR_TEST_ALLOW_LIT_STRIP` too, since
+     TinyBalls' default build has lighting **enabled** and the strip gate
+     otherwise routes every triangle through the unaffected per-triangle
+     fallback (a first attempt without that flag produced zero native-strip
+     calls at all -- confirmed via a temporary per-flush counter printout).
+   - **Result: the line's far endpoint has no corresponding submitted
+     vertex anywhere in the dumped frame.** With the hook correctly armed,
+     a 12-ball, frame-60 hardware capture (`/tmp/claude-1000/.../scratchpad/
+     exact_060.png`, not committed) was cross-referenced against all 9600
+     dumped triangle vertices (12 balls x 800 tri) for that exact frame. The
+     visible line on the top-right (purple) sphere runs from about
+     (429,177) to (449,178); the dump does contain a real, expected
+     degenerate cluster at the near end (the sphere's own pole vertices, all
+     collapsed to ~(429,177), as expected for a UV-sphere pole stack) but
+     **no vertex anywhere in the frame's data falls in x=[440,455],
+     y=[172,184]** -- the far tip of the visible line does not correspond to
+     any triangle TinyGL submitted that frame. The dumped mesh's overall
+     bounding box (x:[209,430], y:[162,316]) does not even reach the line's
+     far endpoint.
+   - **This rules out a bad mesh vertex as the cause.** The line cannot be
+     one real (if misplaced) vertex from this frame's geometry --  it has no
+     source vertex in the CPU-side data at all. The leading hypothesis is
+     now PVR-hardware-side state leakage across separate `tgl_pvr_draw_strip()`
+     calls or ball boundaries (e.g. a stale SQ/TA-input value from a
+     previous, unrelated primitive being interpreted as part of a strip),
+     not a geometry/mesh-generation bug.
+   - **Next:** log submission order/timing (ball index, stack index, and a
+     monotonic submission counter) immediately around list-transition and
+     per-ball boundaries to check whether the stray line's near endpoint
+     ((429,177), the pole cluster) is being connected in hardware to a
+     *leftover* vertex from a prior, unrelated draw call rather than to
+     anything in the current one. Also worth checking whether `EOL` is
+     reliably reaching the hardware at every stack-strip boundary.
 
    Do not re-enable this gate for non-diagnostic builds until a clean
    hardware screenshot is obtained across the full `SPHERE_SLICES` range

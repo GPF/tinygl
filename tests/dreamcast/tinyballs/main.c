@@ -12,6 +12,14 @@
 #include "GL/gl.h"
 #include "GL/tglprofile.h"
 
+#ifdef TGL_PVR_TEST_DUMP_STRIP_TRI_ALL
+/* Diagnostic hook (NEXT_TASKS.md item 8): dump every submitted strip
+ * triangle's screen coords for one exact frame instead of guessing a
+ * strip-call window. Declared directly (not through a public GL header)
+ * since it is a backend test-only symbol, like tgl_pvr_test_arm_fail_next(). */
+void tgl_pvr_test_set_dump_frame(int frame);
+#endif
+
 #ifndef TINYBALLS_SPHERE_SLICES
 #define TINYBALLS_SPHERE_SLICES 20
 #endif
@@ -351,6 +359,14 @@ int main(int argc, char **argv) {
     (void)argv;
     setup();
     reset_window();
+#ifdef TGL_PVR_TEST_DUMP_STRIP_TRI_ALL
+    /* tgl_pvr_flush()'s frame counter advances AFTER each draw_scene()'s
+     * draws (at glFlush()), while frame_number here advances at the END of
+     * draw_scene() but is only checked against 60/72/84 AFTER glFlush() --
+     * so the draws that produce the frame_number==60 capture happen while
+     * the backend's counter still reads 59. Target frame is capture - 1. */
+    tgl_pvr_test_set_dump_frame(59);
+#endif
 
     /* TODO: restore waiting on start_pressed() once profiling passes are
      * done; auto-exit a few seconds after the final result is printed so

@@ -331,6 +331,16 @@ void tgl_pvr_flush(void);
 #ifdef TGL_PVR_TEST_INJECT_FAIL
 void tgl_pvr_test_arm_fail_next(void);
 #endif
+
+/* Test-only: dump every triangle of every native strip submitted during one
+ * exact application frame, keyed to the caller's own frame counter instead
+ * of a guessed strip-call window. Only compiled when built with
+ * -DTGL_PVR_TEST_DUMP_STRIP_TRI_ALL. tgl_pvr_flush() (called once per
+ * application frame) advances the backend's internal frame counter; the
+ * dump fires while that counter equals the armed target. */
+#ifdef TGL_PVR_TEST_DUMP_STRIP_TRI_ALL
+void tgl_pvr_test_set_dump_frame(int frame);
+#endif
 #endif
 
 void gl_draw_triangle_point(GLContext *c,
