@@ -205,6 +205,37 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
    time with SH4ZAM. Collect at least five alternating runs, compare medians,
    and keep `bruces_balls` as a separate direct-PVR reference.
 
+8. **Extend the native PVR strip path (`tgl_pvr_draw_strip`) to lit
+   geometry -- currently broken, needs its own investigation.** TinyBalls
+   profiling (`TINYGL_PROFILE_STAGES`, see
+   `docs/dreamcast_gl_reference_notes.md`) found PVR submit is the largest
+   untimed-savings bucket (~40ms/frame at 12 balls). `glopEnd()`'s strip
+   eligibility gate (`src/vertex.c`) excludes `lighting_enabled` --
+   `docs/strip_fast_path_investigation.md` says this was deliberately
+   deferred ("out of slice 1"), not disqualified for a correctness reason,
+   and `GLVertex.color` is already fully lit by the time `glopEnd()` runs
+   (`gl_shade_vertex()` writes it in `glopVertex`, before `glopEnd`).
+   Tried dropping the `!c->lighting_enabled` clause on real hardware
+   (TinyBalls, SH4ZAM build): FPS jumped ~33% (6.45 -> 8.58 @ 12 balls) but
+   the screenshot showed stray thin connecting-line artifacts on 3 of 6
+   spheres that aren't present in the correct baseline. Reverted the gate;
+   confirmed the artifact disappears and rendering returns to correct.
+   Root cause not yet found -- something about consecutive
+   `tgl_pvr_draw_strip()` calls (separate rows, separate balls) breaks
+   under lit per-vertex colors that didn't show up in the original
+   unlit-only validation. Do not re-enable this gate without first getting
+   a clean hardware screenshot.
+9. **`sq_fast_cpy` vertex-submission batching -- done for triangles and the
+   (currently unlit-only) strip path, not yet tried for textured
+   triangles.** `tgl_pvr_draw_triangle`'s untextured path and
+   `tgl_pvr_draw_strip` build their `pvr_vertex_t` entries into a local
+   array and push them in one `sq_fast_cpy()` call instead of one
+   `pvr_prim()` per vertex (pattern from DCSinge's `src/dcfmv.c` FMV quad
+   submission). Measured ~5% PVR-submit reduction on hardware
+   (TinyBalls), screenshot-verified correct. The textured branch of
+   `tgl_pvr_draw_triangle` still submits one vertex at a time; same
+   treatment should be safe there too but hasn't been tried.
+
 Keep each change small and add a visible hardware test scene alongside it.
 Inspect vertex flags, color packing, UV/depth mapping, alignment, cache
 handling, and PVR state lifetime when output differs. Put repeatable commands
