@@ -463,25 +463,27 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
       return;
     }
 
-    for (i = 0; i < 3; ++i) {
-      pvr_vertex_t vertex = { 0 };
-      vertex.flags = (i == 2) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
-      vertex.x = (float)vertices[i]->zp.x;
-      vertex.y = (float)vertices[i]->zp.y;
-      vertex.z = (float)vertices[i]->zp.z / (float)(1u << 30);
-      if (vertex.z < 0.0f) vertex.z = 0.0f;
-      if (vertex.z > 1.0f) vertex.z = 1.0f;
-      /* TinyGL only supports GL_DECAL; use white vertex color so the
-       * MODULATE texture environment yields the texel exactly. */
-      vertex.u = vertices[i]->tex_coord.X;
-      vertex.v = vertices[i]->tex_coord.Y;
-      vertex.argb = 0xFFFFFFFF;
+    {
+      /* Same sq_fast_cpy() batching as the solid path below: build all 3
+       * vertices contiguously and push them in one call instead of one
+       * pvr_prim() per vertex. */
+      pvr_vertex_t verts[3] = { { 0 } };
 
-      if (pvr_prim(&vertex, sizeof(vertex)) < 0) {
-        tgl_pvr_submission_errors++;
-        fprintf(stderr, "TinyGL PVR: vertex submission failed\n");
-        return;
+      for (i = 0; i < 3; ++i) {
+        verts[i].flags = (i == 2) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+        verts[i].x = (float)vertices[i]->zp.x;
+        verts[i].y = (float)vertices[i]->zp.y;
+        verts[i].z = (float)vertices[i]->zp.z / (float)(1u << 30);
+        if (verts[i].z < 0.0f) verts[i].z = 0.0f;
+        if (verts[i].z > 1.0f) verts[i].z = 1.0f;
+        /* TinyGL only supports GL_DECAL; use white vertex color so the
+         * MODULATE texture environment yields the texel exactly. */
+        verts[i].u = vertices[i]->tex_coord.X;
+        verts[i].v = vertices[i]->tex_coord.Y;
+        verts[i].argb = 0xFFFFFFFF;
       }
+
+      sq_fast_cpy(SQ_MASK_DEST(PVR_TA_INPUT), verts, 3);
     }
     return;
   }

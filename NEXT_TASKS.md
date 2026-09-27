@@ -225,16 +225,23 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
    under lit per-vertex colors that didn't show up in the original
    unlit-only validation. Do not re-enable this gate without first getting
    a clean hardware screenshot.
-9. **`sq_fast_cpy` vertex-submission batching -- done for triangles and the
-   (currently unlit-only) strip path, not yet tried for textured
-   triangles.** `tgl_pvr_draw_triangle`'s untextured path and
-   `tgl_pvr_draw_strip` build their `pvr_vertex_t` entries into a local
-   array and push them in one `sq_fast_cpy()` call instead of one
+9. ~~`sq_fast_cpy` vertex-submission batching for textured triangles.~~
+   **DONE (2026-09-27).** `tgl_pvr_draw_triangle`'s untextured path and
+   `tgl_pvr_draw_strip` already built their `pvr_vertex_t` entries into a
+   local array and pushed them in one `sq_fast_cpy()` call instead of one
    `pvr_prim()` per vertex (pattern from DCSinge's `src/dcfmv.c` FMV quad
-   submission). Measured ~5% PVR-submit reduction on hardware
-   (TinyBalls), screenshot-verified correct. The textured branch of
-   `tgl_pvr_draw_triangle` still submits one vertex at a time; same
-   treatment should be safe there too but hasn't been tried.
+   submission); measured ~5% PVR-submit reduction on hardware (TinyBalls),
+   screenshot-verified correct. The textured branch of
+   `tgl_pvr_draw_triangle` now uses the same batching: it builds all 3
+   `pvr_vertex_t` entries (still one `pvr_prim()` header submission first,
+   since the header is a different, non-vertex TA command) and pushes them
+   with a single `sq_fast_cpy()`. Builds clean with
+   `TINYGL_USE_DREAMCAST_PVR=y TINYGL_USE_SH4ZAM=y`; the `pvr_smoke` ELF
+   (which exercises textured phases 18-20) links successfully.
+   Hardware-confirmed on KOS 2.3.0, 640x480 VGA (2026-09-27): all 24 phases
+   passed, and P18-P20 non-black pixel counts matched the pre-batching
+   baseline exactly (150,528 / 55,296 / 75,264), confirming the batched
+   submission places vertices identically. See `TESTING.md`.
 
 Keep each change small and add a visible hardware test scene alongside it.
 Inspect vertex flags, color packing, UV/depth mapping, alignment, cache

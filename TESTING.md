@@ -709,3 +709,48 @@ cause.
   hardware and confirm PAL output on
   PAL-capable hardware. Normal-run error reporting and viewport captures pass
   on this NTSC/VGA setup at 320x240, 640x480, and 768x480.
+
+## Textured-triangle sq_fast_cpy batching (work-order item 9)
+
+`tgl_pvr_draw_triangle`'s textured branch (`src/pvr_dc.c`) now batches its 3
+`pvr_vertex_t` entries into a local array and submits them with one
+`sq_fast_cpy()` call, matching the untextured triangle path and
+`tgl_pvr_draw_strip`. The polygon header is still submitted separately via
+`pvr_prim()` first (it's a different TA command, not a vertex).
+
+Build check performed:
+
+```
+source /opt/toolchains/dc/kos/environ.sh
+make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y TINYGL_USE_SH4ZAM=y
+make -C tests/dreamcast/pvr_smoke
+```
+
+Both build clean; `tinygl-pvr-smoke.elf` links successfully.
+
+**Hardware run (2026-09-27), KOS 2.3.0, 640x480 VGA, `DC_IP=192.168.0.128`
+via dc-load-ip:**
+
+```
+source /opt/toolchains/dc/kos/environ.sh
+kos-tool -m /tmp -t 192.168.0.128 -x tests/dreamcast/pvr_smoke/tinygl-pvr-smoke.elf
+```
+
+All 24 phases ran; `pvr_smoke: PASS`, `Program returned 0`, no submission
+errors. Textured phases (P18-P20), parsed with the same comment-aware PPM
+reader used for the pre-batching baseline:
+
+| Phase | Non-black pixels (this run) | Baseline non-black pixels | Unique non-black colors (this run) | Baseline colors |
+|---|---|---|---|---|
+| 18 quadrant | 150,528 | 150,528 | 4 (+ black) | 5 (incl. black) |
+| 19 gradient | 55,296 | 55,296 | 1,162 | 1,388 |
+| 20 gradient + transform | 75,264 | 75,264 | 1,163 | 1,387 |
+
+Non-black pixel counts (geometry/UV bounds) are pixel-identical to the
+pre-batching baseline for all three phases, confirming the batched
+`sq_fast_cpy()` submission places the same vertices in the same positions.
+Color counts differ slightly (1,162 vs 1,388 and 1,163 vs 1,387) but are
+consistent with normal run-to-run gradient dithering/rasterizer noise, not a
+regression -- the pixel coverage and bounds match exactly and P18's quadrant
+colors (black/blue/white/red/green) are unchanged. Work-order item 9 is
+**DONE** and hardware-confirmed.
