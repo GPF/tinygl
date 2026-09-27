@@ -316,13 +316,48 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
      calls or ball boundaries (e.g. a stale SQ/TA-input value from a
      previous, unrelated primitive being interpreted as part of a strip),
      not a geometry/mesh-generation bug.
-   - **Next:** log submission order/timing (ball index, stack index, and a
-     monotonic submission counter) immediately around list-transition and
-     per-ball boundaries to check whether the stray line's near endpoint
-     ((429,177), the pole cluster) is being connected in hardware to a
-     *leftover* vertex from a prior, unrelated draw call rather than to
-     anything in the current one. Also worth checking whether `EOL` is
-     reliably reaching the hardware at every stack-strip boundary.
+   - **Root cause found (2026-09-27): degenerate pole triangles, not a
+     TinyGL vertex/strip bug.** Scanning the frame-60 PPM pixel-by-pixel
+     (rather than eyeballing a crop) showed the line is a single scanline
+     (y=177, x=429-447) at roughly half the ball's edge brightness --
+     the raster signature of a near-zero-area triangle, not a real edge.
+     Reconstructing call order from the same dump (240 calls = 12 balls x
+     20 stacks) identified the line's origin call as **ball 3's stack 0 --
+     the sphere's north-pole stack**. `build_sphere_mesh()`
+     (`tests/dreamcast/tinyballs/main.c`) gives stack 0 `latitude = pi/2`,
+     so `ring = cos(pi/2) ~ 0` and *every one of that stack's 21 slice
+     vertices collapses to the same point*; every triangle in the
+     `GL_TRIANGLE_STRIP` built from it is therefore a near-zero-area "fan
+     from a point" pretending to be a strip. No CPU-side vertex ever
+     reached x=440+ in any of the 9600 dumped triangles for that frame --
+     consistent with a hardware raster/setup-engine artifact on
+     near-degenerate triangles, not a misplaced vertex or state leakage.
+   - **Fix applied and hardware-confirmed:** `draw_ball()`
+     (`tests/dreamcast/tinyballs/main.c`) now draws the two polar stacks
+     (`stack == 0` and `stack == SPHERE_STACKS - 1`) as a proper
+     `GL_TRIANGLE_FAN` from the pole point instead of a
+     `GL_TRIANGLE_STRIP` over the collapsed ring, so no degenerate triangle
+     is ever submitted for the caps. Middle stacks are unchanged. Rebuilt
+     (default build: `TINYGL_USE_DREAMCAST_PVR=y`, lighting **enabled**, no
+     test flags) and re-ran the FPS-search test on hardware (KOS 2.3.0,
+     640x480 VGA): frame-60 capture (6 balls this run) shows all six
+     spheres with clean silhouettes. A full-frame pixel scan for isolated
+     thin runs (>15px wide, not backed by a taller blob above/below) found
+     **zero** matches anywhere in the capture.
+   - **Caveat:** this is a mesh-generation fix in the TinyBalls *test*, not
+     a TinyGL backend change -- it works around feeding the PVR degenerate
+     triangles rather than fixing anything in `src/`. Any other TinyGL
+     scene that generates near-zero-area triangles at a shared vertex
+     (not just UV-sphere poles) could still hit the same PowerVR
+     raster/setup artifact. Worth a NEXT_TASKS note if this resurfaces
+     elsewhere: TinyGL currently does not skip or clamp degenerate
+     triangles in `src/pvr_dc.c` before submission.
+   - **Left for later, lower priority given the above:** the state-leakage
+     angle (logging submission order/timing around list-transition and
+     per-ball boundaries, verifying `EOL` reaches hardware at every
+     stack-strip boundary) is no longer the leading hypothesis, but was not
+     directly disproven either -- only superseded by a simpler, confirmed
+     explanation.
 
    Do not re-enable this gate for non-diagnostic builds until a clean
    hardware screenshot is obtained across the full `SPHERE_SLICES` range

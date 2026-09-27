@@ -208,6 +208,31 @@ static void draw_ball(int index) {
     glEnd();
 #else
     for (stack = 0; stack < SPHERE_STACKS; ++stack) {
+        /* The polar stacks' collapsed ring (sphere[0][*] for the north pole,
+         * sphere[SPHERE_STACKS][*] for the south pole -- ring = cos(+-pi/2)
+         * ~ 0, so every slice lands on the same point) makes every triangle
+         * in a GL_TRIANGLE_STRIP built from it near-zero screen-space area.
+         * That degenerate shape was traced (NEXT_TASKS.md item 8) to a
+         * PowerVR raster/setup artifact: a stray one-pixel-tall line
+         * extending well past the sphere's real silhouette. Draw the polar
+         * caps as a proper GL_TRIANGLE_FAN from the pole point instead, so
+         * no triangle submitted for them is degenerate. */
+        if (stack == 0) {
+            glBegin(GL_TRIANGLE_FAN);
+            emit_sphere_vertex(&sphere[0][0]);
+            for (slice = 0; slice <= SPHERE_SLICES; ++slice)
+                emit_sphere_vertex(&sphere[1][slice]);
+            glEnd();
+            continue;
+        }
+        if (stack == SPHERE_STACKS - 1) {
+            glBegin(GL_TRIANGLE_FAN);
+            emit_sphere_vertex(&sphere[SPHERE_STACKS][0]);
+            for (slice = SPHERE_SLICES; slice >= 0; --slice)
+                emit_sphere_vertex(&sphere[SPHERE_STACKS - 1][slice]);
+            glEnd();
+            continue;
+        }
         glBegin(GL_TRIANGLE_STRIP);
         for (slice = 0; slice <= SPHERE_SLICES; ++slice) {
             const SphereVertex *lower = &sphere[stack][slice];

@@ -157,7 +157,12 @@ transformed normals, `GL_NORMALIZE`, and per-vertex lighting. The GL workload
 is identical in SH4ZAM-off/on builds. `pvrmark_strips` remains the separate
 TinyGL backend-submission benchmark.
 
-Each latitude band is submitted as its own `GL_TRIANGLE_STRIP`. Lit strips are
+Each latitude band is submitted as its own `GL_TRIANGLE_STRIP`, except the two
+polar bands (stack 0 and the last stack), which collapse to a single point at
+the pole and are drawn as a `GL_TRIANGLE_FAN` instead -- a `GL_TRIANGLE_STRIP`
+over a collapsed ring is a strip of near-zero-area triangles, which was traced
+on hardware to a stray one-pixel-tall line artifact past the sphere's
+silhouette (root cause and fix: NEXT_TASKS.md item 8). Lit strips are
 excluded from TinyGL's native PVR strip fast path and use the parity-ordered
 per-triangle fallback. The rotation breakup in the physical Dreamcast capture
 was caused by PVR tile-bin overflow: TinyGL initialized the PVR with zero OPB
