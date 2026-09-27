@@ -11,6 +11,10 @@
 #include "zmath.h"
 #include "zfeatures.h"
 
+#ifdef TINYGL_USE_SH4ZAM
+#include <sh4zam/shz_sh4zam.h>
+#endif
+
 #define DEBUG
 /* #define NDEBUG */
 
@@ -304,6 +308,7 @@ void tgl_pvr_draw_point(GLContext *c,GLVertex *p0);
 void tgl_pvr_draw_line(GLContext *c,GLVertex *p0,GLVertex *p1);
 void tgl_pvr_draw_triangle(GLContext *c,GLVertex *p0,GLVertex *p1,
                            GLVertex *p2);
+void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count);
 void tgl_pvr_flush(void);
 
 /* Test-only: arm the backend to simulate one polygon-header submission

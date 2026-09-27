@@ -104,6 +104,14 @@ void glopBegin(GLContext * c, GLParam * p)
 
 	c->matrix_model_projection_updated = 0;
     }
+#ifdef TINYGL_USE_SH4ZAM
+    if (!c->lighting_enabled) {
+	/* Reload once per glBegin, then reuse XMTRX for all vertices in this
+	 * primitive. The input matrix is TinyGL row-major, hence transpose. */
+	shz_xmtrx_load_transpose_unaligned_4x4(
+	    (const float *)(const void *)&c->matrix_model_projection);
+    }
+#endif
     /*  viewport */
     if (c->viewport.updated) {
 	gl_eval_viewport(c);
@@ -186,6 +194,21 @@ static inline void gl_vertex_transform(GLContext * c, GLVertex * v)
 	/* NOTE: W = 1 is assumed */
 	m = &c->matrix_model_projection.m[0][0];
 
+#ifdef TINYGL_USE_SH4ZAM
+	{
+	    shz_vec3_t coord = shz_vec3_init(v->coord.X, v->coord.Y, v->coord.Z);
+	    shz_vec3_t projected = shz_xmtrx_transform_point3(coord);
+	    v->pc.X = projected.x;
+	    v->pc.Y = projected.y;
+	    v->pc.Z = projected.z;
+	    if (c->matrix_model_projection_no_w_transform) {
+		v->pc.W = m[15];
+	    } else {
+		v->pc.W = (v->coord.X * m[12] + v->coord.Y * m[13] +
+			   v->coord.Z * m[14] + m[15]);
+	    }
+	}
+#else
 	v->pc.X = (v->coord.X * m[0] + v->coord.Y * m[1] +
 		   v->coord.Z * m[2] + m[3]);
 	v->pc.Y = (v->coord.X * m[4] + v->coord.Y * m[5] +
@@ -198,6 +221,7 @@ static inline void gl_vertex_transform(GLContext * c, GLVertex * v)
 	    v->pc.W = (v->coord.X * m[12] + v->coord.Y * m[13] +
 		       v->coord.Z * m[14] + m[15]);
 	}
+#endif
     }
 
     v->clip_code = gl_clipcode(v->pc.X, v->pc.Y, v->pc.Z, v->pc.W);
@@ -293,20 +317,19 @@ void glopVertex(GLContext * c, GLParam * p)
 	}
 	break;
     case GL_TRIANGLE_STRIP:
+#ifdef TINYGL_USE_DREAMCAST_PVR
+	/* Keep the complete stream until glEnd so the Dreamcast backend can
+	 * submit eligible strips natively. The fallback replays the same parity
+	 * ordering through gl_draw_triangle(). */
+#else
 	if (cnt >= 3) {
-	    if (n == 3)
-		n = 0;
-            /* needed to respect triangle orientation */
-            switch(cnt & 1) {
-            case 0:
-      		gl_draw_triangle(c,&c->vertex[2],&c->vertex[1],&c->vertex[0]);
-      		break;
-            default:
-            case 1:
-      		gl_draw_triangle(c,&c->vertex[0],&c->vertex[1],&c->vertex[2]);
-      		break;
-            }
+	    if (n == 3) n = 0;
+	    if (cnt & 1)
+		gl_draw_triangle(c, &c->vertex[0], &c->vertex[1], &c->vertex[2]);
+	    else
+		gl_draw_triangle(c, &c->vertex[2], &c->vertex[1], &c->vertex[0]);
 	}
+#endif
 	break;
     case GL_TRIANGLE_FAN:
 	if (n == 3) {
@@ -349,6 +372,32 @@ void glopEnd(GLContext * c, GLParam * param)
 {
     assert(c->in_begin == 1);
 
+#ifdef TINYGL_USE_DREAMCAST_PVR
+    if (c->begin_type == GL_TRIANGLE_STRIP && c->vertex_cnt >= 3) {
+	int i;
+	int eligible = c->polygon_mode_front == GL_FILL &&
+	               c->polygon_mode_back == GL_FILL &&
+	               c->render_mode == GL_RENDER &&
+	               !c->cull_face_enabled && c->pvr_backend &&
+	               !c->lighting_enabled;
+
+	for (i = 0; eligible && i < c->vertex_cnt; ++i) {
+	    if (c->vertex[i].clip_code != 0) eligible = 0;
+	}
+	if (eligible) {
+	    tgl_pvr_draw_strip(c, c->vertex, c->vertex_cnt);
+	} else {
+	    for (i = 0; i + 2 < c->vertex_cnt; ++i) {
+		if (i & 1)
+		    gl_draw_triangle(c, &c->vertex[i + 1], &c->vertex[i],
+			             &c->vertex[i + 2]);
+		else
+		    gl_draw_triangle(c, &c->vertex[i], &c->vertex[i + 1],
+			             &c->vertex[i + 2]);
+	    }
+	}
+    } else
+#endif
     if (c->begin_type == GL_LINE_LOOP) {
 	if (c->vertex_cnt >= 3) {
 	    gl_draw_line(c, &c->vertex[0], &c->vertex[2]);

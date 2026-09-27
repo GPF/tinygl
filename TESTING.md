@@ -1,9 +1,9 @@
 # Testing TinyGL
 
 This guide covers the current software renderer, the opt-in SH4ZAM math path,
-and the Dreamcast PVR smoke test. The PVR smoke test currently verifies filled
-and textured triangles, culling, polygon modes, depth state, blend modes,
-points, and lines.
+and Dreamcast PVR tests. The PVR smoke test currently verifies filled and
+textured triangles, culling, polygon modes, depth state, blend modes, points,
+and lines.
 
 ## Host build and examples
 
@@ -29,6 +29,174 @@ Check that each opens a window and renders. `gears` and `spin` exercise
 transforms and smooth-shaded triangles; `texobj` exercises texture objects;
 `mech` exercises lighting and display lists. These are visual smoke checks,
 not automated conformance tests.
+
+## Dreamcast NeHe06 sample port
+
+Build and run the NeHe lesson 6 sample with the Dreamcast PVR backend:
+
+```bash
+source /opt/toolchains/dc/kos/environ.sh
+make -C src CC=kos-cc TINYGL_USE_GLX= \
+  TINYGL_USE_DREAMCAST_PVR=y TINYGL_USE_SH4ZAM=y
+make -C tests/dreamcast/nehe06 clean
+make -C tests/dreamcast/nehe06
+kos-tool -m /tmp -t 192.168.0.128 \
+  -x tests/dreamcast/nehe06/tinygl-nehe06.elf
+```
+
+The port loads its 256x128 24-bit BMP from romdisk and passes RGB data directly
+to `glTexImage2D` (TinyGL's legacy API takes component count `3`, then the
+`GL_RGB` source format). TinyGL resizes it to 256x256 RGB565. The PVR backend
+must twiddle that linear RGB565 image before upload: `pvr_txr_load()` only
+copies bytes, so `src/pvr_dc.c` uses KOS `pvr_txr_load_ex(...,
+PVR_TXRLOAD_16BPP)` to match the twiddled texture header.
+
+Latest result: the updated sample built and linked, the Dreamcast loader
+reported the expected 256x128 image dimensions without a startup error, and
+the texture rendered correctly on the spinning cube in both Flycast and on a
+physical Dreamcast. The hardware run used KOS 2.3.0 at 640x480 VGA; the first
+hardware run before the twiddling fix showed the same corruption as Flycast.
+
+## Dreamcast PVR strip performance benchmark
+
+`tests/dreamcast/pvrmark_strips/` ports the random-walk triangle-strip workload
+from GLdc's `samples/pvrmark_strips_gldc/`. It reports frame rate every five
+seconds, uses the KOS sample's per-frame `pvr_get_stats().frame_rate` EMA,
+searches around the same 55 FPS target with the same +2,500/-200 steps, and
+reports TinyGL API-build, draw-pipeline, and scene-submit time plus KOS PVR
+timing/vertex statistics. TinyGL starts at a conservative ceiling of 3,500
+triangles/frame and halves down as needed. The KOS direct sample starts at
+33,333 because it submits one raw PVR strip; TinyGL retains a conservative
+3,500-triangle starting ceiling while validating its native strip path and its
+fallback cases.
+
+The GLdc sample's 0..640/480 orthographic coordinates are mapped into TinyGL
+clip coordinates. TinyGL has no `glColor4ub`, so random byte colors are passed
+through `glColor3f`; this adds conversion work compared with GLdc. Compare three
+runs: KOS `pvrmark_strips_direct` as the raw PVR reference, TinyGL with SH4ZAM
+disabled, and TinyGL with SH4ZAM enabled. Keep KOS unmodified: the SH4ZAM
+toggle isolates the effect within TinyGL. The workload generation and search
+method match, while PVR submission differs by design. Eligible TinyGL
+`GL_TRIANGLE_STRIP` blocks now reach the native PVR strip path; culling,
+clipping, lighting, and non-fill cases still use the existing per-triangle
+route.
+
+Build and run once with SH4ZAM off and once with it on. Clean between variants
+because Make does not track compiler flags:
+
+```bash
+source /opt/toolchains/dc/kos/environ.sh
+export PATH=/opt/toolchains/dc/kos/utils/build_wrappers:$PATH
+
+# SH4ZAM disabled
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y
+make -C tests/dreamcast/pvrmark_strips clean
+make -C tests/dreamcast/pvrmark_strips
+kos-tool -m /tmp -t 192.168.0.128 \
+  -x tests/dreamcast/pvrmark_strips/tinygl-pvrmark-strips.elf
+
+# SH4ZAM enabled (build marker and library option must match)
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= \
+  TINYGL_USE_DREAMCAST_PVR=y TINYGL_USE_SH4ZAM=y
+make -C tests/dreamcast/pvrmark_strips clean
+make -C tests/dreamcast/pvrmark_strips BENCH_CFLAGS=-DTINYGL_USE_SH4ZAM
+kos-tool -m /tmp -t 192.168.0.128 \
+  -x tests/dreamcast/pvrmark_strips/tinygl-pvrmark-strips.elf
+```
+
+Do not wrap `kos-tool` in `timeout`; that can drop the DCLOAD connection. Let
+each run print its final threshold result, then press Start to exit. Record the
+console mode, SH4ZAM setting, search result, CPU stage timings, and PVR stats.
+This strip workload has no rotation or normals, so it does not exercise
+SH4ZAM's current sine/cosine or vector-normalization paths; it can quantify the
+current build's strip throughput and any enabled SH4ZAM effect on code paths
+the workload actually reaches, not predict gains from hypothetical new calls.
+
+Physical Dreamcast results (KOS 2.3.0, 640x480 VGA, same console session,
+KOS-matched search): SH4ZAM off finished at 2,100 triangles/frame and 59.08
+FPS (124,078 triangles/sec); SH4ZAM on finished at 2,500 triangles/frame and
+56.10 FPS (140,248 triangles/sec). At those final loads, TinyGL immediate-build
+time was 20.552 ms/frame off and 21.373 ms/frame on; PVR registration was
+22.720 ms off and 22.675 ms on, with about 3.5 ms render time in both runs.
+FPS varied sharply across adjacent loads during the searches, so these are
+preliminary single-run results, not a firm SH4ZAM speedup claim. Repeat the
+A/B runs and collect the KOS direct reference before drawing a conclusion.
+
+The `TINYGL_USE_SH4ZAM` path now loads the unlit model/projection matrix into
+SH4ZAM once per `glBegin` and transforms vertices with the hardware matrix unit.
+The first matched-search A/B is recorded above; repeatability and KOS direct
+reference results remain pending.
+The benchmark's immediate-build interval includes the per-vertex GL calls and
+is the CPU-side cost center to watch. The sample still does not exercise
+SH4ZAM's trig or vector-normalization paths.
+
+Latest fast-path hardware run (single run each, KOS 2.3.0, 640x480 VGA): the
+PVR smoke test built and returned `pvr_smoke: PASS` / exit 0. The strip
+benchmark built and returned 0 for both variants:
+
+| TinyGL build | Threshold triangles/frame | FPS | Triangles/sec | Immediate build | Draw pipeline | PVR registration | PVR render |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| SH4ZAM off | 2,700 | 56.09 | 151,440 | 10.274 ms | 11.367 ms | 14.362 ms | 3.338 ms |
+| SH4ZAM on | 2,700 | 56.24 | 151,841 | 9.648 ms | 10.466 ms | 13.306 ms | 3.404 ms |
+
+These preliminary runs use the native strip submission path, and the benchmark
+does not compare rendered pixels against a `GL_TRIANGLES` oracle. It also
+reports only one run per variant; repeat at least five times and run the
+dedicated strip-versus-triangle hardware image comparison before claiming
+visual equivalence or a repeatable performance gain. The `pvr_smoke` phases do
+not exercise `GL_TRIANGLE_STRIP`.
+
+## Dreamcast TinyBalls math stress scene
+
+`tests/dreamcast/tinyballs/` is the TinyGL counterpart to SH4ZAM's direct-PVR
+`bruces_balls` example. It draws rotating, lit spheres with a 20-by-20
+latitude/longitude mesh (800 triangles per sphere), modelview transforms,
+transformed normals, `GL_NORMALIZE`, and per-vertex lighting. The GL workload
+is identical in SH4ZAM-off/on builds. `pvrmark_strips` remains the separate
+TinyGL backend-submission benchmark.
+
+Each latitude band is submitted as its own `GL_TRIANGLE_STRIP`. Lit strips are
+currently excluded from TinyGL's native PVR strip fast path and use the
+parity-ordered per-triangle fallback. This exclusion is a diagnostic safeguard:
+the physical Dreamcast clip shows sphere surfaces breaking up as the objects
+rotate, and the cause has not yet been isolated. Do not use the current
+TinyBalls FPS/object-count readings as a SH4ZAM performance comparison until
+the geometry renders correctly. The demo requests a one-shot screenshot after
+60 frames at `/pc/tinyballs.ppm`; use `kos-tool -m /tmp` to place the capture at
+`/tmp/tinyballs.ppm`. The delayed-capture build compiles, but a settled capture
+from that exact build still needs hardware verification.
+
+Build and run both variants on the same console and video mode. Clean the
+library and test between builds because Make does not track compiler flags:
+
+```bash
+source /opt/toolchains/dc/kos/environ.sh
+
+# SH4ZAM disabled
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y
+make -C tests/dreamcast/tinyballs clean all
+kos-tool -m /tmp -t 192.168.0.128 \
+  -x tests/dreamcast/tinyballs/tinygl-tinyballs.elf
+
+# SH4ZAM enabled
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= \
+  TINYGL_USE_DREAMCAST_PVR=y TINYGL_USE_SH4ZAM=y
+make -C tests/dreamcast/tinyballs clean
+make -C tests/dreamcast/tinyballs STRESS_CFLAGS=-DTINYGL_USE_SH4ZAM
+kos-tool -m /tmp -t 192.168.0.128 \
+  -x tests/dreamcast/tinyballs/tinygl-tinyballs.elf
+```
+
+The first TinyBalls hardware runs are diagnostic only. SH4ZAM-off runs reached
+the 55 FPS target at two or three spheres depending on the run, but the visible
+rotation breakup invalidates those counts as a baseline. First fix and
+visually verify the geometry on hardware, then repeat alternating SH4ZAM-off
+and -on runs before reporting a speedup or comparing object counts with
+`bruces_balls`.
 
 ## Dreamcast SH4ZAM build
 

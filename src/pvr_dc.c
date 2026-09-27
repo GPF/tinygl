@@ -38,8 +38,8 @@ static int tgl_pvr_header_blend_dst = -1;
  * TGL_FEATURE_RENDER_BITS, which is 16-bit RGB565 on this build). The PVR
  * wants a twiddled texture, so the pixmap is copied into a 2048-byte
  * aligned system-RAM buffer, cache-synced, then twiddled into VRAM via
- * pvr_txr_load (the same pattern KOS's plasma example uses). The load is
- * cached per pixmap pointer so repeated frames do not re-twiddle. */
+ * pvr_txr_load_ex. The load is cached per pixmap pointer so repeated frames
+ * do not re-twiddle. */
 #define TGL_PVR_TEXTURE_SIZE (256 * 256 * 2)
 
 static pvr_poly_hdr_t tgl_pvr_txr_header;
@@ -302,8 +302,9 @@ static void tgl_pvr_select_list(int blend_enabled) {
   tgl_pvr_list_type = wanted;
 }
 
-/* Load the current texture into VRAM (twiddled RGB565), caching by pixmap
- * pointer. Returns the VRAM base address to use in the polygon context. */
+/* Load the current texture into VRAM as twiddled RGB565, caching by pixmap
+ * pointer. pvr_txr_load() only copies bytes; pvr_txr_load_ex() performs the
+ * twiddle required by the texture header. Returns the VRAM base address. */
 static pvr_ptr_t tgl_pvr_texture_load(GLContext *c) {
   GLImage *im = &c->current_texture->images[0];
   void *pixmap = im->pixmap;
@@ -316,9 +317,10 @@ static pvr_ptr_t tgl_pvr_texture_load(GLContext *c) {
 
   if (tgl_pvr_last_pixmap != pixmap) {
     memcpy(tgl_pvr_txr_src, pixmap, TGL_PVR_TEXTURE_SIZE);
-    /* pvr_txr_load DMA-reads the source; commit CPU writes to RAM first. */
+    /* The aligned scratch copy keeps the source stable for the upload. */
     arch_dcache_wback_range((uintptr_t)tgl_pvr_txr_src, TGL_PVR_TEXTURE_SIZE);
-    pvr_txr_load(tgl_pvr_txr_src, tgl_pvr_txr_vram, TGL_PVR_TEXTURE_SIZE);
+    pvr_txr_load_ex(tgl_pvr_txr_src, tgl_pvr_txr_vram, 256, 256,
+                    PVR_TXRLOAD_16BPP);
     tgl_pvr_last_pixmap = pixmap;
   }
 
@@ -498,6 +500,48 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
     if (pvr_prim(&vertex, sizeof(vertex)) < 0) {
       tgl_pvr_submission_errors++;
       fprintf(stderr, "TinyGL PVR: vertex submission failed\n");
+      return;
+    }
+  }
+}
+
+/* Submit a prevalidated, unclipped GL triangle strip as one native TA strip.
+ * Lighting, when enabled, has already been evaluated into vertex colors. */
+void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
+  int i;
+  int textured;
+
+  if (count < 3) return;
+  tgl_pvr_begin_scene();
+  if (!tgl_pvr_scene_active) return;
+  tgl_pvr_select_list(c->blend_enabled);
+  if (!tgl_pvr_list_active) return;
+
+  textured = c->texture_2d_enabled && c->current_texture &&
+             c->current_texture->images[0].pixmap;
+  if (textured) {
+    tgl_pvr_update_txr_header(c);
+    if (tgl_pvr_prim(&tgl_pvr_txr_header, sizeof(tgl_pvr_header)) < 0) {
+      tgl_pvr_submission_errors++;
+      fprintf(stderr, "TinyGL PVR: strip header submission failed\n");
+      return;
+    }
+  } else if (tgl_pvr_submit_header(c) < 0) {
+    return;
+  }
+
+  for (i = 0; i < count; ++i) {
+    pvr_vertex_t vertex = { 0 };
+    tgl_pvr_set_vertex(&vertex, &vertices[i], (float)vertices[i].zp.x,
+                       (float)vertices[i].zp.y, i == count - 1);
+    if (textured) {
+      vertex.u = vertices[i].tex_coord.X;
+      vertex.v = vertices[i].tex_coord.Y;
+      vertex.argb = 0xFFFFFFFF;
+    }
+    if (tgl_pvr_prim(&vertex, sizeof(vertex)) < 0) {
+      tgl_pvr_submission_errors++;
+      fprintf(stderr, "TinyGL PVR: strip vertex submission failed\n");
       return;
     }
   }

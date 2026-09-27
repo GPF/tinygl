@@ -53,9 +53,26 @@ The backend currently has these known gaps:
   submission error at shutdown (see `TESTING.md`). Real KOS-generated failure
   behavior is not exercised; the hook simulates the `pvr_prim()` error return.
 
-GLdc sample compatibility is a future goal. First finish TinyGL's own
-Dreamcast PVR implementation and its focused tests; then use GLdc samples to
-prioritize API and backend additions.
+TinyGL's core PVR milestones are implemented. GLdc sample compatibility has
+started with the `tests/dreamcast/nehe06/` port. Its first texture run exposed
+a real backend issue: the PVR header expected twiddled RGB565 data, but the
+upload path only copied linear pixels. The backend now uses KOS
+`pvr_txr_load_ex()` for twiddling. The sample's texture is visually verified
+in Flycast and on physical Dreamcast hardware.
+
+The current performance work has two complementary targets. The strip test at
+`tests/dreamcast/pvrmark_strips/` measures backend submission; eligible
+unlit `GL_TRIANGLE_STRIP` blocks use the native PVR strip path. The math test
+at `tests/dreamcast/tinyballs/` is a TinyGL counterpart to SH4ZAM's direct-PVR
+`bruces_balls`: rotating, lit spheres exercise transforms, normals, and
+`GL_NORMALIZE` identically in SH4ZAM-off/on builds. The Dreamcast clip shows
+surface breakup as the spheres rotate. Lit strips are therefore routed through
+TinyGL's per-triangle fallback while the PVR depth/transform behavior is
+investigated. TinyBalls performance counts are not a valid comparison yet;
+resolve and visually verify the rendering before repeating the A/B against
+`bruces_balls`. The test captures a `/pc/tinyballs.ppm` screenshot after 60
+frames; verify that delayed capture on hardware. Build steps and observed
+diagnostics are in `TESTING.md`.
 
 ## Recommended work order
 
@@ -168,6 +185,26 @@ prioritize API and backend additions.
      default is not a reliable test. KOS could not create the `/pc/...` PPM
      screenshots, so this run verifies mode selection from the log, not visible
      rendering. Real non-VGA hardware validation remains useful.
+6. **Complete the PVR triangle-strip performance comparison.** The TinyGL
+   port is in `tests/dreamcast/pvrmark_strips/`; repeat its hardware A/B runs
+   with SH4ZAM enabled and disabled, then run KOS's unmodified
+   `pvrmark_strips_direct` and compare threshold FPS/stage timings with TinyGL
+   and GLdc's `pvrmark_strips_gldc`. Profile before expanding SH4ZAM use.
+   A gated native PVR strip path is implemented for eligible `GL_TRIANGLE_STRIP`
+   blocks. It buffers transformed vertices until `glEnd`; fill, unlit, uncullled,
+   unclipped strips use one PVR header and one EOL, while ineligible strips
+   replay the original parity-ordered triangle route. Ordinary `GL_TRIANGLES`
+   behavior is unchanged. See `docs/strip_fast_path_investigation.md` for the
+   design and hardware validation matrix. Real Dreamcast pixel comparison and
+   matched benchmark runs remain pending; do not claim a performance gain yet.
+7. **Fix TinyBalls rotation breakup before benchmarking.** Use
+   `tests/dreamcast/tinyballs/` and its delayed screenshot capture to diagnose
+   the surface patches that disappear as the spheres rotate. Lit strips are
+   currently sent through the parity-ordered triangle fallback, so compare
+   transformed vertex/depth output and verify the settled PPM on the console.
+   Only after a correct hardware image, collect at least five alternating
+   SH4ZAM-off/on runs; then compare stable sphere count, CPU timings, and PVR
+   stats with KOS's `bruces_balls` as a separate direct-PVR reference.
 
 Keep each change small and add a visible hardware test scene alongside it.
 Inspect vertex flags, color packing, UV/depth mapping, alignment, cache

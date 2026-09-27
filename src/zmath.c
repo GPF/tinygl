@@ -222,8 +222,11 @@ void gl_M4_Rotate(M4 *a,float t,int u)
    if ((v=u+1)>2) v=0;
 	 if ((w=v+1)>2) w=0;
 #ifdef TINYGL_USE_SH4ZAM
-	 s=shz_sinf(t);
-	 c=shz_cosf(t);
+	 {
+	     shz_sincos_t sc=shz_sincosf(t);
+	     s=sc.sin;
+	     c=sc.cos;
+	 }
 #else
 	 s=sin(t);
 	 c=cos(t);
