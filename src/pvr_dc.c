@@ -30,6 +30,9 @@ static int tgl_pvr_header_depth_write = -1;
 static int tgl_pvr_header_blend = -1;
 static int tgl_pvr_header_blend_src = -1;
 static int tgl_pvr_header_blend_dst = -1;
+#ifdef TGL_PVR_TEST_DUMP_STRIP
+static unsigned int tgl_pvr_debug_strip_id;
+#endif
 
 /* Textured-triangle support.
  *
@@ -534,6 +537,40 @@ void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
   int textured;
 
   if (count < 3) return;
+#ifdef TGL_PVR_TEST_DUMP_STRIP
+  if (count == 42 && tgl_pvr_debug_strip_id < 1200) {
+    unsigned int strip_id = tgl_pvr_debug_strip_id++;
+    for (i = 1; i < count; ++i) {
+      int dx = vertices[i].zp.x - vertices[i - 1].zp.x;
+      int dy = vertices[i].zp.y - vertices[i - 1].zp.y;
+      if (dx < 0) dx = -dx;
+      if (dy < 0) dy = -dy;
+      if (dx > 10 || dy > 10) {
+        printf("STRIP %u VERTEX %d: (%d,%d,%d)->(%d,%d,%d)\n",
+               strip_id, i, vertices[i - 1].zp.x, vertices[i - 1].zp.y,
+               vertices[i - 1].zp.z, vertices[i].zp.x, vertices[i].zp.y,
+               vertices[i].zp.z);
+      }
+    }
+    if (strip_id >= 1180) {
+      for (i = 0; i + 2 < count; ++i) {
+        int x0 = vertices[i].zp.x, y0 = vertices[i].zp.y;
+        int x1 = vertices[i + 1].zp.x, y1 = vertices[i + 1].zp.y;
+        int x2 = vertices[i + 2].zp.x, y2 = vertices[i + 2].zp.y;
+        int area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+        int e0 = (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0);
+        int e1 = (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1);
+        int e2 = (x0 - x2) * (x0 - x2) + (y0 - y2) * (y0 - y2);
+        int longest = e0 > e1 ? e0 : e1;
+        if (e2 > longest) longest = e2;
+        if (area >= -64 && area <= 64 && longest > 100) {
+          printf("THIN STRIP %u TRI %d: area=%d (%d,%d) (%d,%d) (%d,%d)\n",
+                 strip_id, i, area, x0, y0, x1, y1, x2, y2);
+        }
+      }
+    }
+  }
+#endif
   tgl_pvr_begin_scene();
   if (!tgl_pvr_scene_active) return;
   tgl_pvr_select_list(c->blend_enabled);
@@ -558,9 +595,15 @@ void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
    * (see KOS's pvr_scene.c), and pvr_vertex_t is exactly one 32-byte,
    * 32-byte-aligned TA block. A fixed batch buffer (rather than sizing to
    * `count`) keeps stack use bounded regardless of strip length. */
+#ifndef TGL_PVR_STRIP_BATCH
 #define TGL_PVR_STRIP_BATCH 32
+#endif
   {
+#ifdef TGL_PVR_TEST_ZERO_STRIP_VERTICES
+    pvr_vertex_t verts[TGL_PVR_STRIP_BATCH] = { { 0 } };
+#else
     pvr_vertex_t verts[TGL_PVR_STRIP_BATCH];
+#endif
     int batch_start;
 
     for (batch_start = 0; batch_start < count; batch_start += TGL_PVR_STRIP_BATCH) {
@@ -578,7 +621,17 @@ void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
 	}
       }
 
+#ifdef TGL_PVR_TEST_STRIP_PVR_PRIM
+      for (i = 0; i < batch_count; ++i) {
+        if (tgl_pvr_prim(&verts[i], sizeof(verts[i])) < 0) {
+          tgl_pvr_submission_errors++;
+          fprintf(stderr, "TinyGL PVR: strip vertex submission failed\n");
+          return;
+        }
+      }
+#else
       sq_fast_cpy(SQ_MASK_DEST(PVR_TA_INPUT), verts, batch_count);
+#endif
     }
   }
 #undef TGL_PVR_STRIP_BATCH

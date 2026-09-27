@@ -799,10 +799,11 @@ The screenshot (`/tmp/tinyballs.ppm`, saved locally as
 `tinyballs_litstrip_12balls.ppm`, not committed) reproduced the previously
 reported artifact exactly: a thin line juts out to the right of 3 of the 12
 spheres, at roughly equator height, terminating in open space a short fixed
-distance from the sphere surface without connecting to anything else. The
-line's color interpolates smoothly (it is Gouraud-shaded, not a solid
-debug color), which points to one real mesh triangle with a single
-mis-positioned vertex rather than a PVR list/header transition glitch.
+distance from the sphere surface without connecting to anything else. Its
+smooth Gouraud color initially suggested a mis-positioned mesh vertex, but
+the later single-sphere input-geometry checks did not find a corresponding
+screen-space discontinuity or skinny triangle. That explanation remains
+unconfirmed.
 
 **Batch-boundary hypothesis tested and ruled out.** Each sphere row strip
 has `(SPHERE_SLICES+1)*2 = 42` vertices with the normal `SPHERE_SLICES=20`,
@@ -819,13 +820,29 @@ committed). This rules out `sq_fast_cpy` batch-chunking as the root cause;
 the local `main.c` edit was reverted before committing anything (`git diff`
 confirmed clean on `tests/dreamcast/tinyballs/main.c` afterward).
 
-**Status:** root cause still open. Next steps for whoever picks this up:
-binary-search `SPHERE_SLICES` between 14 and 20 to find the smallest count
-that reproduces the original thin-line artifact (rather than the worse
-wedge failure) to narrow which vertex index/parity triggers it; dump raw
-`pvr_vertex_t` values for one bad strip instead of relying on screenshots;
-and check whether the artifact vertex's position is stale data left over
-from the previous strip/ball's vertex buffer rather than a fresh
-computation for the current one. Do not re-enable the gate for
-non-diagnostic builds until a clean hardware screenshot is obtained at the
-real `SPHERE_SLICES=20`.
+**Status:** root cause still open. Keep the gate disabled for normal builds
+until a clean hardware screenshot is obtained at the real `SPHERE_SLICES=20`.
+
+**Follow-up hardware isolation (KOS 2.3.0, 640x480 VGA, 2026-09-27):**
+The batch-boundary test was expanded beyond 14 slices. At the normal 20
+slices (42 vertices per row), changing the batch size to 64 so the strip is
+copied in one `sq_fast_cpy()` call did not remove the artifact. Zeroing the
+temporary PVR vertex array and submitting each vertex with `pvr_prim()` also
+did not remove it. An exact copy of the first longitude at the seam did not
+help, and joining all latitude bands into one strip made the artifacts worse.
+The test was then reduced to one unlit sphere: the line still appeared in a
+rotation capture. This rules out lighting math and interactions between balls
+as necessary causes.
+
+For a captured rotation, a temporary logger checked adjacent input screen
+coordinates for jumps over 10 pixels and checked triangles in the final
+captured frame for small signed area with a long edge (absolute doubled area
+at most 64 pixels squared, longest edge over 10 pixels). It found neither.
+The image artifact remained, while the earlier native-strip versus
+per-triangle comparison showed the fallback image clean. This makes PVR strip
+topology or strip rasterization the leading area to investigate; the available
+evidence does not yet distinguish those possibilities or prove a PVR hardware
+fault. Next compare the same captured vertices as explicit PVR triangles
+under the same polygon state, then test a controlled strip vertex-order
+change. The saved `/pc/tinyballs_060.ppm`, `_072.ppm`, and `_084.ppm` captures
+are on the Dreamcast's `/pc` device; they were not copied into the repository.

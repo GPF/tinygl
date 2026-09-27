@@ -236,33 +236,27 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
      having a single mis-positioned vertex (a Gouraud-shaded sliver, not a
      rendering/list-transition glitch, since colors interpolate correctly
      along it).
-   - **The `sq_fast_cpy` 32-vertex batch boundary is ruled out as the
-     cause.** Each sphere row strip is 42 vertices (`(SPHERE_SLICES+1)*2`
-     with `SPHERE_SLICES=20`), which crosses `tgl_pvr_draw_strip`'s
-     `TGL_PVR_STRIP_BATCH=32` split into two `sq_fast_cpy()` calls -- a
-     configuration never exercised by the earlier unlit-only strip
-     validation (unlit strips never reached this code path with a
-     >32-vertex row). Diagnostic: temporarily reduced `SPHERE_SLICES` to
-     14 (30 vertices/row, one single un-split batch) and reran on
-     hardware. If the batch split were the cause, the artifact should have
-     disappeared. **It did not** -- instead, at 14 slices every sphere
-     showed large scalloped/"pac-man" wedges of missing geometry, a
-     visibly worse and different failure mode (captured at
-     `/tmp/tinyballs_14slices_12balls.ppm`, not committed; this was a
-     throwaway local edit to `tests/dreamcast/tinyballs/main.c`, reverted
-     before committing). This means the bug is not in the `sq_fast_cpy`
-     batch-chunking mechanism itself, and is more likely in how per-vertex
-     Gouraud color/position data interacts with the native PVR strip
-     submission for the specific vertex stream a lit sphere row produces
-     (e.g. a stale or wrongly-indexed `GLVertex` entry, or a normal/lit
-     color computed from unreplaced state for one strip vertex).
-   - **Not yet tried:** binary-searching `SPHERE_SLICES` between 14 and 20
-     to find the smallest count that still reproduces the *original* thin
-     line (rather than the worse wedge failure), which would narrow which
-     vertex index/parity triggers it; dumping raw `pvr_vertex_t` values for
-     one bad strip instead of only screenshot inspection; and checking
-     whether the artifact vertex's position is a stale value from the
-     *previous* strip/ball's vertex buffer rather than a fresh computation.
+   - **Batch-copy details are not the cause.** The 14-slice single-batch
+     test produced larger missing wedges, so it was inconclusive about the
+     original line. At 20 slices, increasing the batch size to 64 (one
+     `sq_fast_cpy()` for all 42 vertices) still reproduced the line.
+     Zero-initializing the temporary PVR vertex array and submitting every
+     vertex individually with `pvr_prim()` also made no difference.
+   - **Lighting and multiple objects are not required.** With lighting
+     disabled and one sphere only, the line still appeared in a rotation
+     capture. An exact longitude seam copy did not help; joining latitude
+     bands into one strip made the artifacts worse.
+   - **No suspicious source triangle was found in the captured frame.** A
+     temporary logger checked adjacent screen-coordinate jumps and triangles
+     with absolute doubled area <=64 and an edge longer than 10 pixels. It
+     printed no matches for the captured rotation. This weakens the stale
+     or malformed input-vertex theory, but does not rule out a PVR-side
+     interpretation issue. The per-triangle fallback remains visually clean.
+   - **Next:** submit the same vertices as explicit PVR triangles with the
+     same polygon state, then make a controlled strip vertex-order change.
+     This should separate strip topology effects from other state/submission
+     differences. The leading hypothesis is PVR strip topology or raster
+     interpretation; root cause remains unproven.
 
    Do not re-enable this gate for non-diagnostic builds until a clean
    hardware screenshot is obtained across the full `SPHERE_SLICES` range

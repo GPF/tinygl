@@ -12,12 +12,34 @@
 #include "GL/gl.h"
 #include "GL/tglprofile.h"
 
+#ifndef TINYBALLS_SPHERE_SLICES
+#define TINYBALLS_SPHERE_SLICES 20
+#endif
+#ifndef TINYBALLS_CAPTURE_ROTATIONS
+#define TINYBALLS_CAPTURE_ROTATIONS 0
+#endif
+#ifndef TINYBALLS_SEARCH_DELAY
+#define TINYBALLS_SEARCH_DELAY 5
+#endif
+#ifndef TINYBALLS_DISABLE_LIGHTING
+#define TINYBALLS_DISABLE_LIGHTING 0
+#endif
+#ifndef TINYBALLS_CONTINUOUS_STRIPS
+#define TINYBALLS_CONTINUOUS_STRIPS 0
+#endif
+#ifndef TINYBALLS_INITIAL_BALLS
+#define TINYBALLS_INITIAL_BALLS 12
+#endif
+#ifndef TINYBALLS_EXACT_SEAM
+#define TINYBALLS_EXACT_SEAM 0
+#endif
+
 enum {
     SPHERE_STACKS = 20,
-    SPHERE_SLICES = 20,
+    SPHERE_SLICES = TINYBALLS_SPHERE_SLICES,
     TRIANGLES_PER_BALL = SPHERE_STACKS * SPHERE_SLICES * 2,
     MAX_BALLS = 12,
-    INITIAL_BALLS = MAX_BALLS,
+    INITIAL_BALLS = TINYBALLS_INITIAL_BALLS,
     BALL_STEP = 2
 };
 enum { SEARCH_HALVE, SEARCH_INCREASE, SEARCH_REFINE, SEARCH_FINAL };
@@ -48,15 +70,16 @@ static uint64_t geometry_us;
 static uint64_t frame_us;
 static uint32_t profile_frames;
 static const float target_fps = 55.0f;
-static int screenshot_saved;
+static int screenshots_saved;
 
-static void capture_screenshot(void) {
-    const char *path = "/pc/tinyballs.ppm";
+static void capture_screenshot(int frame) {
+    char path[48];
+    snprintf(path, sizeof(path), "/pc/tinyballs_%03d.ppm", frame);
     if (vid_screen_shot(path) < 0) {
         printf("TinyBalls: screenshot failed: %s\n", path);
         return;
     }
-    screenshot_saved = 1;
+    ++screenshots_saved;
     printf("TinyBalls: screenshot saved: %s\n", path);
     fflush(stdout);
 }
@@ -79,6 +102,12 @@ static void build_sphere_mesh(void) {
         for (slice = 0; slice <= SPHERE_SLICES; ++slice) {
             float longitude = 2.0f * pi * slice / SPHERE_SLICES;
             SphereVertex *v = &sphere[stack][slice];
+#if TINYBALLS_EXACT_SEAM
+            if (slice == SPHERE_SLICES) {
+                *v = sphere[stack][0];
+                continue;
+            }
+#endif
             v->position[0] = ring * cosf(longitude);
             v->position[1] = y;
             v->position[2] = ring * sinf(longitude);
@@ -124,8 +153,10 @@ static void setup(void) {
     glLightfv(GL_LIGHT0, GL_AMBIENT, light_ambient);
     glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diffuse);
     glLightfv(GL_LIGHT0, GL_POSITION, light_position);
+#if !TINYBALLS_DISABLE_LIGHTING
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
+#endif
 
 #ifdef TINYGL_USE_SH4ZAM
     printf("TinyBalls; TinyGL PVR; SH4ZAM enabled\n");
@@ -136,6 +167,7 @@ static void setup(void) {
            "55 FPS target, max %d balls, %d Hz\n",
            SPHERE_STACKS, SPHERE_SLICES, TRIANGLES_PER_BALL,
            MAX_BALLS, refresh_rate);
+    printf("Lighting: %s\n", TINYBALLS_DISABLE_LIGHTING ? "disabled" : "enabled");
 }
 
 static void emit_sphere_vertex(const SphereVertex *v) {
@@ -148,6 +180,25 @@ static void draw_ball(int index) {
 
     glColor3f(ball_colors[index % 6][0], ball_colors[index % 6][1],
               ball_colors[index % 6][2]);
+#if TINYBALLS_CONTINUOUS_STRIPS
+    glBegin(GL_TRIANGLE_STRIP);
+    for (stack = 0; stack < SPHERE_STACKS; ++stack) {
+        int first_slice = 0;
+        if (stack > 0) {
+            /* The prior band's final upper vertex equals this band's first
+             * lower vertex. Repeat that pair to bridge bands with two
+             * degenerate triangles while preserving strip parity. */
+            emit_sphere_vertex(&sphere[stack][0]);
+            emit_sphere_vertex(&sphere[stack + 1][0]);
+            first_slice = 1;
+        }
+        for (slice = first_slice; slice <= SPHERE_SLICES; ++slice) {
+            emit_sphere_vertex(&sphere[stack][slice]);
+            emit_sphere_vertex(&sphere[stack + 1][slice]);
+        }
+    }
+    glEnd();
+#else
     for (stack = 0; stack < SPHERE_STACKS; ++stack) {
         glBegin(GL_TRIANGLE_STRIP);
         for (slice = 0; slice <= SPHERE_SLICES; ++slice) {
@@ -158,6 +209,7 @@ static void draw_ball(int index) {
         }
         glEnd();
     }
+#endif
 }
 
 static void draw_scene(void) {
@@ -311,7 +363,13 @@ int main(int argc, char **argv) {
         draw_scene();
         glFlush();
         /* Let the PVR display a stable scene before grabbing its framebuffer. */
-        if (!screenshot_saved && frame_number >= 60) capture_screenshot();
+#if TINYBALLS_CAPTURE_ROTATIONS
+        if (frame_number == 60 || frame_number == 72 || frame_number == 84)
+            capture_screenshot(frame_number);
+#else
+        if (!screenshots_saved && frame_number >= 60)
+            capture_screenshot(frame_number);
+#endif
         frame_us += timer_us_gettime64() - start;
         ++profile_frames;
 
@@ -321,7 +379,7 @@ int main(int argc, char **argv) {
         }
 
         if (search_phase != SEARCH_FINAL &&
-            time(NULL) >= search_started + 5) {
+            time(NULL) >= search_started + TINYBALLS_SEARCH_DELAY) {
             advance_search(&stats);
         }
     }
