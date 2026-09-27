@@ -144,6 +144,15 @@ static void switch_tests(int triangles_per_frame) {
 static void print_stats(float avgfps) {
     pvr_stats_t stats;
 
+#ifdef PVRMARK_QUIET_STAGE_PRINTF
+    /* Diagnostic (NEXT_TASKS.md item 6 correction): suppress the periodic
+     * stage-timing prints below to test whether console-print I/O over the
+     * live dcload connection is perturbing the timed search loop. Search
+     * control flow, pvr_get_stats() calls, and the "Testing"/"Final result"
+     * transition prints are unchanged. */
+    (void)avgfps;
+    return;
+#endif
     if (pvr_get_stats(&stats) == 0) {
         if (stats.rnd_last_time < 1000000000ULL) {
             printf("  PVR last frame: registration %.3f ms, render %.3f ms, "

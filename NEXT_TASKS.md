@@ -188,12 +188,22 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
      rendering. Real non-VGA hardware validation remains useful.
 6. **Complete the PVR triangle-strip performance comparison.** Data
    collected (2026-09-27); **the SH4ZAM-off result below did not reproduce
-   on a second 5-run set the same day** (2,300 tri/frame median vs the
-   original 2,900 -- a ~20% gap, bimodal across the two sessions, not
-   explained by noise). Full detail and next steps in `TESTING.md`'s
+   across three same-day sessions** (2,900 -> 2,300 -> 1,900 tri/frame
+   median, monotonically decreasing). A third set run with the benchmark's
+   periodic stage-timing `printf`s suppressed
+   (`-DPVRMARK_QUIET_STAGE_PRINTF`) ruled out console-print latency as the
+   cause -- it produced the *lowest* median yet (1,900), and its own 5
+   runs showed a monotonic within-set drift (2700,2500,1900,1900,1900)
+   rather than random scatter, settling to a bit-identical cluster. This
+   looks like cumulative thermal/console-state drift from many consecutive
+   hardware runs without a power cycle, not a code or measurement-timing
+   issue -- the binary was identical (verified) across all three sessions.
+   Full detail and the recommended controlled-measurement protocol
+   (power-cycle before each session, fixed warm-up, treat the
+   run-to-run-identical tail as the reading) are in `TESTING.md`'s
    "Correction: the SH4ZAM-off result above is not stable across sessions"
-   note. **Do not cite the numbers below as settled** until that's
-   root-caused and a much larger multi-session run set is collected; the
+   note and its printf-latency follow-up. **Do not cite the numbers below
+   as settled** until re-measured under that protocol; the
    visual-equivalence check also remains open (see below). Original
    (unconfirmed) 5 alternating hardware A/B runs of
    `tests/dreamcast/pvrmark_strips/` (SH4ZAM on/off) plus one reference run

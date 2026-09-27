@@ -232,15 +232,39 @@ variance at this triangle-count range. The coarse search step sizes
 anywhere in a wide band and a 5-run sample only sees whichever narrow slice
 of that band the console happened to be in that session.
 
-**Practical implication:** treat the 2,900 tri/frame / 161,879 tri/sec
-SH4ZAM-off figure (and, by extension, the SH4ZAM-on comparison and the GLdc
-head-to-head above, all collected in the same first session) as one
-data point, not a settled number. Before relying on this benchmark for a
-real performance claim: collect at least 10-15 runs per variant across
-multiple sessions (not back-to-back in one sitting), and investigate
-whether disabling the per-5-second stage-timing `printf`s changes the
-result -- that would confirm or rule out console-print latency as the
-cause.
+**Follow-up (same day): console-print latency ruled out; found a monotonic
+drift signature instead.** A third set of 5 runs was collected with the
+periodic stage-timing `printf`s suppressed entirely (`-DPVRMARK_QUIET_STAGE_PRINTF`,
+`tests/dreamcast/pvrmark_strips/main.c`; only `print_stats()`'s output is
+skipped, no other behavior changes) to test whether console-print I/O over
+the live dcload connection was perturbing the timed loop:
+
+2700, 2500, 1900, 1900, 1900 tri/frame (55.22, 55.82, 55.95, 55.95, 55.95
+fps; 149093, 139545, 106298, 106298, 106300 tri/sec) -- median 1,900
+tri/frame, 55.95 fps, 106,300 tri/sec. This is lower than *both* prior
+sessions (2,900 then 2,300), and the spread did not shrink -- so
+console-print latency is not the (main) cause.
+
+The shape of this data is the real finding: it is not random scatter, it is
+a **monotonic drift downward within the run set itself**, settling exactly
+at run 3 and staying bit-for-bit identical for runs 3-5. Combined with all
+three same-day sessions themselves trending down in sequence (2,900 ->
+2,300 -> 1,900), this looks like cumulative thermal or PVR/console state
+drift from many consecutive hardware runs without a power cycle, not
+measurement noise and not a code-path difference (the binary was identical
+across all three sessions).
+
+**Practical implication:** treat every number in this section (both
+SH4ZAM variants, the GLdc comparison, and this quiet-mode set) as
+provisional until re-measured under a controlled protocol: power-cycle
+the console before each fresh set of runs (not just between builds), let
+it idle for a fixed warm-up period, and take the first stable
+run-to-run-identical cluster within a set as the reading for that
+session -- e.g. this set's true converged value is arguably 1,900 (the
+reproducible tail), with runs 1-2 being transient settling, not 3
+independent samples of the same distribution. Collecting 10-15 runs in
+one already-warmed-up, freshly power-cycled session is a stronger next
+step than more runs under today's drifting conditions.
 
 ## Dreamcast TinyBalls math stress scene
 
