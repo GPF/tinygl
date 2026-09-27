@@ -453,6 +453,33 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
    baseline exactly (150,528 / 55,296 / 75,264), confirming the batched
    submission places vertices identically. See `TESTING.md`.
 
+10. **PVR header reuse and registration path (active).** Same-state polygon
+    headers are now reused within a PVR list. TinyBalls profiling at 12 balls
+    counts 216 native strips and roughly 338 visible cap triangles; emitted
+    headers fell from about 554 to 1 per frame. One uninstrumented hardware
+    run showed a modest registration improvement, which needs repeated
+    comparison. A cross-strip queue cut SQ copies but ran slower on hardware
+    and was dropped. Sampled backend timings point to vertex conversion taking
+    more time than SQ copies within the native-strip path; investigate
+    `tgl_pvr_set_vertex` packing and repeated fan-vertex conversion next. Keep
+    `gl_add_op()` and immediate-mode architecture out of scope for this step.
+    See `TESTING.md` for counts and hardware measurements.
+
+    **Vertex-conversion sub-step (in progress, not yet hardware-tested):**
+    `tgl_pvr_draw_strip`'s batched SQ path now uses a specialized
+    `tgl_pvr_set_vertex_tex()` for textured vertices so it skips the ARGB
+    color-component math that the textured branch immediately discarded
+    (overwritten to `argb = 0xFFFFFFFF`). Output is bit-identical; only dead
+    work was removed. Neither existing hardware test exercised the affected
+    code path (`pvrmark_strips` is untextured; `pvr_smoke`'s textured phases
+    use fans/triangles, not strips), so added
+    `tests/dreamcast/pvrmark_strips_tex/` -- a textured copy of
+    `pvrmark_strips` -- to measure `tgl_profile_pvr_pack_us` on an actually
+    textured strip workload. See `TESTING.md` for build commands and the
+    hardware acceptance plan. Next after hardware confirms this: decide
+    whether the solid-path ARGB conversion is worth caching/hoisting earlier
+    (likely a broader win than this textured-only dead-work removal).
+
 Keep each change small and add a visible hardware test scene alongside it.
 Inspect vertex flags, color packing, UV/depth mapping, alignment, cache
 handling, and PVR state lifetime when output differs. Put repeatable commands

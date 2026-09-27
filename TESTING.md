@@ -889,6 +889,99 @@ safe to do repeatably on hardware). On real hardware, if the backend failed to
 recover from such an error, report the observed hung/garbled state and root
 cause.
 
+## PVR header reuse and submission profiling (work-order item 10)
+
+The PVR backend now reuses a polygon header while its state and list remain
+unchanged. It emits a new header after a state rebuild, a list transition, or
+at the start of a new scene. This keeps TA command ordering intact while
+avoiding one repeated `pvr_prim()` call per same-state primitive.
+
+`TINYGL_PROFILE_PVR` adds per-frame counts for headers, strips, triangles,
+vertices, and SQ batches. It samples one in 32 strips and triangles for timing,
+so it avoids the per-vertex timer reads from `TINYGL_PROFILE_STAGES`.
+
+Build and run the diagnostic TinyBalls target:
+
+```
+source /opt/toolchains/dc/kos/environ.sh
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y EXTRA_CFLAGS=-DTINYGL_PROFILE_PVR
+make -C tests/dreamcast/tinyballs clean all STRESS_CFLAGS=-DTINYGL_PROFILE_PVR
+kos-tool -m /tmp -t 192.168.0.128 -x tests/dreamcast/tinyballs/tinygl-tinyballs.elf
+```
+
+On the Dreamcast (KOS 2.3.0, 640x480 VGA, 2026-09-27), the 12-ball window
+reported 216 strips, about 338 submitted cap triangles, 10,086 TA vertices,
+and 770 SQ batches per frame. Header submissions fell from about 554 to 1.
+Sampled 42-vertex strips averaged about 37 us for conversion and 6 us for SQ
+copy; treat those samples as directional because this profile build still
+measured slower than an uninstrumented run.
+
+The uninstrumented 12-ball run with header reuse measured 60.7 ms geometry and
+60.8 ms PVR registration, versus the earlier baseline's 62.6 ms and 65.3 ms.
+That is a modest single-run improvement, not yet a stable benchmark result.
+
+A follow-up experiment queued adjacent strips and reduced the SQ batch count
+from about 770 to 374 per frame, while retaining the 216 EOL-terminated
+strips. The 12-ball capture looked clean, but two uninstrumented runs measured
+about 65.6 ms geometry and 65.7-68.2 ms registration. The queue implementation
+was dropped; local per-strip staging is currently faster on this hardware.
+The one-shot header-failure smoke test also passed after header reuse: it
+forced the armed header attempt, completed all 24 phases, and reported exactly
+one submission error.
+
+## Textured vertex-packing specialization (work-order item 10, vertex conversion)
+
+`tgl_pvr_set_vertex()` always computed the ARGB color packing (four
+`tgl_pvr_color_component()` clamp/multiply pairs), even for textured strip
+vertices, where the batched-strip loop in `tgl_pvr_draw_strip()`
+(`src/pvr_dc.c`) immediately overwrote `argb` with `0xFFFFFFFF` afterward.
+Added `tgl_pvr_set_vertex_tex()` -- position/z/UV packing only, no color
+math -- and hoisted the `textured` branch out of the per-vertex loop in the
+`TGL_PVR_STRIP_BATCH` path so it picks the solid or textured packer once per
+batch instead of re-branching every vertex. Output is bit-identical to
+before: solid vertices still go through the unchanged `tgl_pvr_set_vertex()`,
+and textured vertices get the same UV / `argb = 0xFFFFFFFF` result, just
+without computing the color that got discarded.
+
+This only affects the `textured` branch of `tgl_pvr_draw_strip`'s batched SQ
+path, and neither existing hardware benchmark exercises it there:
+`pvrmark_strips` never binds a texture, and `pvr_smoke`'s textured phases
+(18-20) use `GL_TRIANGLE_FAN`/`GL_TRIANGLES`, not `GL_TRIANGLE_STRIP`. Added
+`tests/dreamcast/pvrmark_strips_tex/`, a copy of `pvrmark_strips` that binds a
+32x32 checkerboard texture and emits a UV per vertex on the same random-walk
+`GL_TRIANGLE_STRIP` workload, so `TINYGL_PROFILE_PVR`'s
+`tgl_profile_pvr_pack_us` actually samples the affected code path.
+
+Build check performed:
+
+```
+source /opt/toolchains/dc/kos/environ.sh
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y
+make -C tests/dreamcast/pvrmark_strips_tex clean all
+make -C tests/dreamcast/pvrmark_strips clean all
+make -C tests/dreamcast/pvr_smoke clean all
+```
+
+All three link clean. Also confirmed the profiled build (matching the item-10
+profiling recipe above) compiles and links:
+
+```
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y EXTRA_CFLAGS=-DTINYGL_PROFILE_PVR
+make -C tests/dreamcast/pvrmark_strips_tex clean all BENCH_CFLAGS=-DTINYGL_PROFILE_PVR
+```
+
+**Not yet run on hardware.** Planned acceptance: run
+`tinygl-pvrmark-strips-tex.elf` (profiled build) before/after this change and
+compare `tgl_profile_pvr_pack_us`'s per-strip mean; then re-run `pvr_smoke`
+phases 18-20 and confirm the non-black pixel counts still match the item-9
+baseline (150,528 / 55,296 / 75,264) to confirm the textured path stayed
+bit-identical. `pvrmark_strips_tex` measures throughput/timing only (no
+screenshot capture); `pvr_smoke` remains the correctness check for textured
+output.
+
 ## Next steps
 
 - Work-order item 5 is implemented. The submission-error reporting/recovery is

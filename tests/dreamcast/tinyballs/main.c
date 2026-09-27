@@ -132,7 +132,7 @@ static void setup(void) {
     GLfloat light_position[4] = { -0.45f, 0.70f, 1.0f, 0.0f };
 
     build_sphere_mesh();
-#ifdef TINYGL_PROFILE_STAGES
+#if defined(TINYGL_PROFILE_STAGES) || defined(TINYGL_PROFILE_PVR)
     tgl_profile_clock = timer_us_gettime64;
 #endif
     vid_set_mode(DM_640x480_VGA, PM_RGB565);
@@ -293,6 +293,20 @@ static void reset_window(void) {
     tgl_profile_submit_us = 0;
     tgl_profile_viewport_us = 0;
 #endif
+#ifdef TINYGL_PROFILE_PVR
+    tgl_profile_pvr_header_count = 0;
+    tgl_profile_pvr_strip_count = 0;
+    tgl_profile_pvr_triangle_count = 0;
+    tgl_profile_pvr_vertex_count = 0;
+    tgl_profile_pvr_sq_batch_count = 0;
+    tgl_profile_pvr_pack_us = 0;
+    tgl_profile_pvr_copy_us = 0;
+    tgl_profile_pvr_strip_us = 0;
+    tgl_profile_pvr_triangle_us = 0;
+    tgl_profile_pvr_strip_samples = 0;
+    tgl_profile_pvr_triangle_samples = 0;
+    tgl_profile_pvr_copy_samples = 0;
+#endif
     search_started = time(NULL);
     printf("Testing %d balls: %d triangles/frame\n", ball_count,
            ball_count * TRIANGLES_PER_BALL);
@@ -314,6 +328,29 @@ static void print_window(const pvr_stats_t *stats) {
            tgl_profile_transform_us / scale, tgl_profile_normal_us / scale,
            tgl_profile_light_us / scale, tgl_profile_viewport_us / scale,
            tgl_profile_submit_us / scale);
+#endif
+#ifdef TINYGL_PROFILE_PVR
+    printf("  PVR/frame: headers %.1f, strips %.1f, triangles %.1f, "
+           "vertices %.0f, SQ batches %.1f\n",
+           tgl_profile_pvr_header_count / (double)profile_frames,
+           tgl_profile_pvr_strip_count / (double)profile_frames,
+           tgl_profile_pvr_triangle_count / (double)profile_frames,
+           tgl_profile_pvr_vertex_count / (double)profile_frames,
+           tgl_profile_pvr_sq_batch_count / (double)profile_frames);
+    printf("  PVR sample means: strip pack %.1f us, copy batch %.1f us "
+           "(%0.f copies), strip staging %.1f us (%0.f strips); "
+           "triangle %.1f us (%0.f triangles)\n",
+           tgl_profile_pvr_strip_samples ?
+               (double)tgl_profile_pvr_pack_us / tgl_profile_pvr_strip_samples : 0.0,
+           tgl_profile_pvr_copy_samples ?
+               (double)tgl_profile_pvr_copy_us / tgl_profile_pvr_copy_samples : 0.0,
+           (double)tgl_profile_pvr_copy_samples,
+           tgl_profile_pvr_strip_samples ?
+               (double)tgl_profile_pvr_strip_us / tgl_profile_pvr_strip_samples : 0.0,
+           (double)tgl_profile_pvr_strip_samples,
+           tgl_profile_pvr_triangle_samples ?
+               (double)tgl_profile_pvr_triangle_us / tgl_profile_pvr_triangle_samples : 0.0,
+           (double)tgl_profile_pvr_triangle_samples);
 #endif
 }
 

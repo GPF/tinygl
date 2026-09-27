@@ -300,18 +300,34 @@ void gl_draw_triangle(GLContext *c,GLVertex *p0,GLVertex *p1,GLVertex *p2);
 void gl_draw_line(GLContext *c,GLVertex *p0,GLVertex *p1);
 void gl_draw_point(GLContext *c,GLVertex *p0);
 
-#ifdef TINYGL_PROFILE_STAGES
-/* Diagnostic per-stage timing hooks. Disabled by default; a host app sets
- * tgl_profile_clock to a microsecond clock (e.g. timer_us_gettime64) and
- * reads the accumulators back between frames. Zero overhead when
- * TINYGL_PROFILE_STAGES is not defined. */
+#if defined(TINYGL_PROFILE_STAGES) || defined(TINYGL_PROFILE_PVR)
+/* Optional profiling clock. Per-vertex timing is added only with
+ * TINYGL_PROFILE_STAGES; TINYGL_PROFILE_PVR uses sampled backend timings. */
 #include <stdint.h>
 extern uint64_t (*tgl_profile_clock)(void);
+#endif
+
+#ifdef TINYGL_PROFILE_STAGES
 extern uint64_t tgl_profile_transform_us;
 extern uint64_t tgl_profile_normal_us;
 extern uint64_t tgl_profile_light_us;
 extern uint64_t tgl_profile_submit_us;
 extern uint64_t tgl_profile_viewport_us;
+#endif
+
+#ifdef TINYGL_PROFILE_PVR
+extern uint64_t tgl_profile_pvr_header_count;
+extern uint64_t tgl_profile_pvr_strip_count;
+extern uint64_t tgl_profile_pvr_triangle_count;
+extern uint64_t tgl_profile_pvr_vertex_count;
+extern uint64_t tgl_profile_pvr_sq_batch_count;
+extern uint64_t tgl_profile_pvr_pack_us;
+extern uint64_t tgl_profile_pvr_copy_us;
+extern uint64_t tgl_profile_pvr_strip_us;
+extern uint64_t tgl_profile_pvr_triangle_us;
+extern uint64_t tgl_profile_pvr_strip_samples;
+extern uint64_t tgl_profile_pvr_triangle_samples;
+extern uint64_t tgl_profile_pvr_copy_samples;
 #endif
 
 #ifdef TINYGL_USE_DREAMCAST_PVR

@@ -23,6 +23,7 @@ static int tgl_pvr_initialized;
 static int tgl_pvr_scene_active;
 static int tgl_pvr_list_active;
 static pvr_list_t tgl_pvr_list_type;
+static int tgl_pvr_last_header_kind = -1;
 static int tgl_pvr_submission_errors;  /* PVR submission failures this session */
 static int tgl_pvr_header_depth_test = -1;
 static int tgl_pvr_header_depth_func = -1;
@@ -30,6 +31,10 @@ static int tgl_pvr_header_depth_write = -1;
 static int tgl_pvr_header_blend = -1;
 static int tgl_pvr_header_blend_src = -1;
 static int tgl_pvr_header_blend_dst = -1;
+#ifdef TGL_PVR_TEST_INJECT_FAIL
+static int tgl_pvr_test_fail_next;
+static int tgl_pvr_test_fail_fired;
+#endif
 #ifdef TGL_PVR_TEST_DUMP_STRIP
 static unsigned int tgl_pvr_debug_strip_id;
 #endif
@@ -89,6 +94,7 @@ int tgl_pvr_init(void) {
   context.depth.comparison = PVR_DEPTHCMP_ALWAYS;
   context.depth.write = PVR_DEPTHWRITE_DISABLE;
   pvr_poly_compile(&tgl_pvr_header, &context);
+  tgl_pvr_last_header_kind = -1;
   tgl_pvr_header_depth_test = -1;
   tgl_pvr_header_depth_func = -1;
   tgl_pvr_header_depth_write = -1;
@@ -126,13 +132,41 @@ static void tgl_pvr_set_vertex(pvr_vertex_t *vertex, const GLVertex *source,
   vertex->argb = (a << 24) | (r << 16) | (g << 8) | b;
 }
 
+/* Textured vertices always submit argb=0xFFFFFFFF (modulation comes from the
+ * texture stage), so skip the four color_component clamps/multiplies that
+ * tgl_pvr_set_vertex() would immediately overwrite. Position/z/UV packing
+ * only. */
+static void tgl_pvr_set_vertex_tex(pvr_vertex_t *vertex, const GLVertex *source,
+                                   float x, float y, int last) {
+  vertex->flags = last ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+  vertex->x = x;
+  vertex->y = y;
+  vertex->z = (float)source->zp.z / (float)(1u << 30);
+  if (vertex->z < 0.0f) vertex->z = 0.0f;
+  if (vertex->z > 1.0f) vertex->z = 1.0f;
+  vertex->u = source->tex_coord.X;
+  vertex->v = source->tex_coord.Y;
+  vertex->argb = 0xFFFFFFFF;
+}
+
 static int tgl_pvr_submit_header(GLContext *c) {
+  int skip_header;
+
   tgl_pvr_update_header(c);
+  skip_header = (tgl_pvr_last_header_kind == 0);
+#ifdef TGL_PVR_TEST_INJECT_FAIL
+  if (tgl_pvr_test_fail_next) skip_header = 0;
+#endif
+  if (skip_header) return 0;
   if (tgl_pvr_prim(&tgl_pvr_header, sizeof(tgl_pvr_header)) < 0) {
     tgl_pvr_submission_errors++;
     fprintf(stderr, "TinyGL PVR: polygon header submission failed\n");
     return -1;
   }
+  tgl_pvr_last_header_kind = 0;
+#ifdef TINYGL_PROFILE_PVR
+  ++tgl_profile_pvr_header_count;
+#endif
   return 0;
 }
 
@@ -162,7 +196,8 @@ void tgl_pvr_draw_point(GLContext *c, GLVertex *p0) {
   tgl_pvr_begin_scene();
   if (!tgl_pvr_scene_active) return;
   tgl_pvr_select_list(c->blend_enabled);
-  if (!tgl_pvr_list_active || tgl_pvr_submit_header(c) < 0) return;
+  if (!tgl_pvr_list_active) return;
+  if (tgl_pvr_submit_header(c) < 0) return;
   tgl_pvr_submit_quad(sources, xy);
 }
 
@@ -195,7 +230,8 @@ void tgl_pvr_draw_line(GLContext *c, GLVertex *p0, GLVertex *p1) {
   tgl_pvr_begin_scene();
   if (!tgl_pvr_scene_active) return;
   tgl_pvr_select_list(c->blend_enabled);
-  if (!tgl_pvr_list_active || tgl_pvr_submit_header(c) < 0) return;
+  if (!tgl_pvr_list_active) return;
+  if (tgl_pvr_submit_header(c) < 0) return;
   tgl_pvr_submit_quad(sources, xy);
 }
 
@@ -267,6 +303,7 @@ static void tgl_pvr_update_header(GLContext *c) {
     context.blend.dst_enable = 0;
   }
   pvr_poly_compile(&tgl_pvr_header, &context);
+  tgl_pvr_last_header_kind = -1;
 
   tgl_pvr_header_depth_test = c->depth_test;
   tgl_pvr_header_depth_func = c->depth_func;
@@ -279,6 +316,7 @@ static void tgl_pvr_update_header(GLContext *c) {
 static void tgl_pvr_begin_scene(void) {
   if (tgl_pvr_scene_active || !tgl_pvr_initialized) return;
 
+  tgl_pvr_last_header_kind = -1;
   pvr_scene_begin();
   if (pvr_list_begin(PVR_LIST_OP_POLY) < 0) {
     tgl_pvr_submission_errors++;
@@ -310,6 +348,7 @@ static void tgl_pvr_select_list(int blend_enabled) {
     tgl_pvr_list_type = -1;
     return;
   }
+  tgl_pvr_last_header_kind = -1;
   tgl_pvr_list_type = wanted;
 }
 
@@ -392,6 +431,22 @@ static void tgl_pvr_update_txr_header(GLContext *c) {
   tgl_pvr_txr_blend_src = c->blend_src;
   tgl_pvr_txr_blend_dst = c->blend_dst;
   tgl_pvr_txr_header_pixmap = pixmap;
+  tgl_pvr_last_header_kind = -1;
+}
+
+static int tgl_pvr_submit_txr_header(GLContext *c, const char *error_message) {
+  tgl_pvr_update_txr_header(c);
+  if (tgl_pvr_last_header_kind == 1) return 0;
+  if (pvr_prim(&tgl_pvr_txr_header, sizeof(tgl_pvr_header)) < 0) {
+    tgl_pvr_submission_errors++;
+    fprintf(stderr, "%s\n", error_message);
+    return -1;
+  }
+  tgl_pvr_last_header_kind = 1;
+#ifdef TINYGL_PROFILE_PVR
+  ++tgl_profile_pvr_header_count;
+#endif
+  return 0;
 }
 
 /* Test-only one-shot PVR submission failure injection.
@@ -400,9 +455,6 @@ static void tgl_pvr_update_txr_header(GLContext *c) {
  * Normal builds define neither the state nor the arming hook.
  */
 #ifdef TGL_PVR_TEST_INJECT_FAIL
-static int tgl_pvr_test_fail_next;  /* armed by tgl_pvr_test_arm_fail_next() */
-static int tgl_pvr_test_fail_fired; /* records that the injection fired     */
-
 void tgl_pvr_test_arm_fail_next(void) {
   tgl_pvr_test_fail_next = 1;
 }
@@ -431,15 +483,29 @@ static int tgl_pvr_prim(const void *cmd, size_t size) {
   return pvr_prim(cmd, size);
 }
 
-#ifdef TINYGL_PROFILE_STAGES
+#if defined(TINYGL_PROFILE_STAGES) || defined(TINYGL_PROFILE_PVR)
 static void tgl_pvr_draw_triangle_impl(GLContext *c, GLVertex *p0, GLVertex *p1,
                                         GLVertex *p2);
 
 void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
                            GLVertex *p2) {
+#ifdef TINYGL_PROFILE_PVR
+  int pvr_sample = (tgl_profile_pvr_triangle_count & 31u) == 31u;
+  uint64_t pvr_t0 = (pvr_sample && tgl_profile_clock) ? tgl_profile_clock() : 0;
+#endif
+#ifdef TINYGL_PROFILE_STAGES
   uint64_t t0 = tgl_profile_clock ? tgl_profile_clock() : 0;
+#endif
   tgl_pvr_draw_triangle_impl(c, p0, p1, p2);
+#ifdef TINYGL_PROFILE_STAGES
   if (tgl_profile_clock) tgl_profile_submit_us += tgl_profile_clock() - t0;
+#endif
+#ifdef TINYGL_PROFILE_PVR
+  if (pvr_sample && tgl_profile_clock) {
+    tgl_profile_pvr_triangle_us += tgl_profile_clock() - pvr_t0;
+    ++tgl_profile_pvr_triangle_samples;
+  }
+#endif
 }
 
 static void tgl_pvr_draw_triangle_impl(GLContext *c, GLVertex *p0, GLVertex *p1,
@@ -460,19 +526,19 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
   tgl_pvr_select_list(c->blend_enabled);
   if (!tgl_pvr_list_active) return;
 
+#ifdef TINYGL_PROFILE_PVR
+  ++tgl_profile_pvr_triangle_count;
+  tgl_profile_pvr_vertex_count += 3;
+#endif
+
   /* Textured path only when a texture is enabled AND its pixmap is actually
    * present. If the pixmap is missing (e.g. the texture image was never
    * populated), fall through to the solid-color path rather than emitting a
    * textured polygon with an empty VRAM base. */
   if (c->texture_2d_enabled && c->current_texture &&
       c->current_texture->images[0].pixmap) {
-    tgl_pvr_update_txr_header(c);
-
-    if (pvr_prim(&tgl_pvr_txr_header, sizeof(tgl_pvr_header)) < 0) {
-      tgl_pvr_submission_errors++;
-      fprintf(stderr, "TinyGL PVR: texture polygon header submission failed\n");
-      return;
-    }
+    if (tgl_pvr_submit_txr_header(c,
+            "TinyGL PVR: texture polygon header submission failed") < 0) return;
 
     {
       /* Same sq_fast_cpy() batching as the solid path below: build all 3
@@ -495,20 +561,17 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
       }
 
       sq_fast_cpy(SQ_MASK_DEST(PVR_TA_INPUT), verts, 3);
+#ifdef TINYGL_PROFILE_PVR
+      ++tgl_profile_pvr_sq_batch_count;
+#endif
     }
     return;
   }
 
-  tgl_pvr_update_header(c);
-
   /* Route the solid polygon header through tgl_pvr_prim(). Normal builds are
    * a thin pass-through to pvr_prim(); the smoke test builds with
    * -DTGL_PVR_TEST_INJECT_FAIL to inject one controlled failure here. */
-  if (tgl_pvr_prim(&tgl_pvr_header, sizeof(tgl_pvr_header)) < 0) {
-    tgl_pvr_submission_errors++;
-    fprintf(stderr, "TinyGL PVR: polygon header submission failed\n");
-    return;
-  }
+  if (tgl_pvr_submit_header(c) < 0) return;
 
   {
     /* Build all 3 vertices contiguously, then push them to the TA in one
@@ -535,6 +598,9 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
     }
 
     sq_fast_cpy(SQ_MASK_DEST(PVR_TA_INPUT), verts, 3);
+#ifdef TINYGL_PROFILE_PVR
+    ++tgl_profile_pvr_sq_batch_count;
+#endif
   }
 }
 
@@ -543,8 +609,18 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
 void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
   int i;
   int textured;
+#ifdef TINYGL_PROFILE_PVR
+  int profile_sample;
+  uint64_t profile_t0;
+#endif
 
   if (count < 3) return;
+#ifdef TINYGL_PROFILE_PVR
+  ++tgl_profile_pvr_strip_count;
+  tgl_profile_pvr_vertex_count += count;
+  profile_sample = (tgl_profile_pvr_strip_count & 31u) == 1u;
+  profile_t0 = (profile_sample && tgl_profile_clock) ? tgl_profile_clock() : 0;
+#endif
 #ifdef TGL_PVR_TEST_DUMP_STRIP
   if (count == 42 && tgl_pvr_debug_strip_id < 1200) {
     unsigned int strip_id = tgl_pvr_debug_strip_id++;
@@ -605,12 +681,8 @@ void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
   textured = c->texture_2d_enabled && c->current_texture &&
              c->current_texture->images[0].pixmap;
   if (textured) {
-    tgl_pvr_update_txr_header(c);
-    if (tgl_pvr_prim(&tgl_pvr_txr_header, sizeof(tgl_pvr_header)) < 0) {
-      tgl_pvr_submission_errors++;
-      fprintf(stderr, "TinyGL PVR: strip header submission failed\n");
-      return;
-    }
+    if (tgl_pvr_submit_txr_header(c,
+            "TinyGL PVR: strip header submission failed") < 0) return;
   } else if (tgl_pvr_submit_header(c) < 0) {
     return;
   }
@@ -673,12 +745,25 @@ void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
   }
   return;
 #endif
-  /* Push vertices to the TA in fixed-size batches via one sq_fast_cpy() per
-   * batch instead of one pvr_prim() (== one sq_fast_cpy()) call per vertex.
-   * Safe: pvr_list_begin() already holds the SQ lock for the whole list
-   * (see KOS's pvr_scene.c), and pvr_vertex_t is exactly one 32-byte,
-   * 32-byte-aligned TA block. A fixed batch buffer (rather than sizing to
-   * `count`) keeps stack use bounded regardless of strip length. */
+  /* Convert into 32-byte TA records and batch each strip's records through
+   * SQ copies. */
+#ifdef TGL_PVR_TEST_STRIP_PVR_PRIM
+  for (i = 0; i < count; ++i) {
+    pvr_vertex_t vertex;
+    tgl_pvr_set_vertex(&vertex, &vertices[i], (float)vertices[i].zp.x,
+                       (float)vertices[i].zp.y, i == count - 1);
+    if (textured) {
+      vertex.u = vertices[i].tex_coord.X;
+      vertex.v = vertices[i].tex_coord.Y;
+      vertex.argb = 0xFFFFFFFF;
+    }
+    if (tgl_pvr_prim(&vertex, sizeof(vertex)) < 0) {
+      tgl_pvr_submission_errors++;
+      fprintf(stderr, "TinyGL PVR: strip vertex submission failed\n");
+      return;
+    }
+  }
+#else
 #ifndef TGL_PVR_STRIP_BATCH
 #define TGL_PVR_STRIP_BATCH 32
 #endif
@@ -693,32 +778,52 @@ void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
     for (batch_start = 0; batch_start < count; batch_start += TGL_PVR_STRIP_BATCH) {
       int batch_count = count - batch_start;
       if (batch_count > TGL_PVR_STRIP_BATCH) batch_count = TGL_PVR_STRIP_BATCH;
-
-      for (i = 0; i < batch_count; ++i) {
-	int idx = batch_start + i;
-	tgl_pvr_set_vertex(&verts[i], &vertices[idx], (float)vertices[idx].zp.x,
-			   (float)vertices[idx].zp.y, idx == count - 1);
-	if (textured) {
-	  verts[i].u = vertices[idx].tex_coord.X;
-	  verts[i].v = vertices[idx].tex_coord.Y;
-	  verts[i].argb = 0xFFFFFFFF;
-	}
-      }
-
-#ifdef TGL_PVR_TEST_STRIP_PVR_PRIM
-      for (i = 0; i < batch_count; ++i) {
-        if (tgl_pvr_prim(&verts[i], sizeof(verts[i])) < 0) {
-          tgl_pvr_submission_errors++;
-          fprintf(stderr, "TinyGL PVR: strip vertex submission failed\n");
-          return;
+#ifdef TINYGL_PROFILE_PVR
+      uint64_t pack_t0 = 0;
+      if (profile_sample && tgl_profile_clock) pack_t0 = tgl_profile_clock();
+#endif
+      if (textured) {
+        for (i = 0; i < batch_count; ++i) {
+          int idx = batch_start + i;
+          tgl_pvr_set_vertex_tex(&verts[i], &vertices[idx],
+                                 (float)vertices[idx].zp.x,
+                                 (float)vertices[idx].zp.y, idx == count - 1);
+        }
+      } else {
+        for (i = 0; i < batch_count; ++i) {
+          int idx = batch_start + i;
+          tgl_pvr_set_vertex(&verts[i], &vertices[idx], (float)vertices[idx].zp.x,
+                             (float)vertices[idx].zp.y, idx == count - 1);
         }
       }
-#else
+#ifdef TINYGL_PROFILE_PVR
+      if (profile_sample && tgl_profile_clock)
+        tgl_profile_pvr_pack_us += tgl_profile_clock() - pack_t0;
+#endif
+#ifdef TINYGL_PROFILE_PVR
+      {
+        uint64_t copy_t0 = (profile_sample && tgl_profile_clock) ?
+            tgl_profile_clock() : 0;
+#endif
       sq_fast_cpy(SQ_MASK_DEST(PVR_TA_INPUT), verts, batch_count);
+#ifdef TINYGL_PROFILE_PVR
+        ++tgl_profile_pvr_sq_batch_count;
+        if (profile_sample && tgl_profile_clock) {
+          tgl_profile_pvr_copy_us += tgl_profile_clock() - copy_t0;
+          ++tgl_profile_pvr_copy_samples;
+        }
+      }
 #endif
     }
   }
 #undef TGL_PVR_STRIP_BATCH
+#endif
+#ifdef TINYGL_PROFILE_PVR
+  if (profile_sample && tgl_profile_clock) {
+    tgl_profile_pvr_strip_us += tgl_profile_clock() - profile_t0;
+    ++tgl_profile_pvr_strip_samples;
+  }
+#endif
 }
 
 void tgl_pvr_flush(void) {

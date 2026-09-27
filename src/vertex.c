@@ -1,12 +1,28 @@
 #include "zgl.h"
 
-#ifdef TINYGL_PROFILE_STAGES
+#if defined(TINYGL_PROFILE_STAGES) || defined(TINYGL_PROFILE_PVR)
 uint64_t (*tgl_profile_clock)(void) = NULL;
+#endif
+#ifdef TINYGL_PROFILE_STAGES
 uint64_t tgl_profile_transform_us = 0;
 uint64_t tgl_profile_normal_us = 0;
 uint64_t tgl_profile_light_us = 0;
 uint64_t tgl_profile_submit_us = 0;
 uint64_t tgl_profile_viewport_us = 0;
+#endif
+#ifdef TINYGL_PROFILE_PVR
+uint64_t tgl_profile_pvr_header_count = 0;
+uint64_t tgl_profile_pvr_strip_count = 0;
+uint64_t tgl_profile_pvr_triangle_count = 0;
+uint64_t tgl_profile_pvr_vertex_count = 0;
+uint64_t tgl_profile_pvr_sq_batch_count = 0;
+uint64_t tgl_profile_pvr_pack_us = 0;
+uint64_t tgl_profile_pvr_copy_us = 0;
+uint64_t tgl_profile_pvr_strip_us = 0;
+uint64_t tgl_profile_pvr_triangle_us = 0;
+uint64_t tgl_profile_pvr_strip_samples = 0;
+uint64_t tgl_profile_pvr_triangle_samples = 0;
+uint64_t tgl_profile_pvr_copy_samples = 0;
 #endif
 
 void glopNormal(GLContext * c, GLParam * p)
