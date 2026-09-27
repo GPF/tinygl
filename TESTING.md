@@ -106,9 +106,9 @@ kos-tool -m /tmp -t 192.168.0.128 \
   -x tests/dreamcast/pvrmark_strips/tinygl-pvrmark-strips.elf
 ```
 
-Do not wrap `kos-tool` in `timeout`; that can drop the DCLOAD connection. Let
-each run print its final threshold result, then press Start to exit. Record the
-console mode, SH4ZAM setting, search result, CPU stage timings, and PVR stats.
+Do not wrap `kos-tool` in `timeout`; that can drop the DCLOAD connection. Each
+run now exits automatically after printing its final threshold result. Record
+the console mode, SH4ZAM setting, search result, CPU stage timings, and PVR stats.
 This strip workload has no rotation or normals, so it does not exercise
 SH4ZAM's current sine/cosine or vector-normalization paths; it can quantify the
 current build's strip throughput and any enabled SH4ZAM effect on code paths

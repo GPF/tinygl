@@ -44,13 +44,6 @@ static void running_stats(void) {
     else avgfps = (avgfps + stats.frame_rate) / 2.0f;
 }
 
-static int check_start(void) {
-    maple_device_t *cont = maple_enum_type(0, MAPLE_FUNC_CONTROLLER);
-    cont_state_t *state = cont ? (cont_state_t *)maple_dev_status(cont) : NULL;
-
-    return state ? (state->buttons & CONT_START) != 0 : 0;
-}
-
 static inline int getnum(int *seed, int mask) {
     int num = *seed & (mask - 1);
     *seed = *seed * 1164525 + 1013904223;
@@ -180,7 +173,7 @@ static void print_stats(float avgfps) {
 
 static void finish_search(float avgfps, const char *reason) {
     printf("Final result: %d strip triangles/frame, %.2f fps, %.0f triangles/sec "
-           "(%s). Press Start to exit.\n",
+           "(%s). Exiting automatically.\n",
            polycnt, avgfps, polycnt * avgfps, reason);
     phase = PHASE_FINAL;
     fflush(stdout);
@@ -250,7 +243,7 @@ int main(int argc, char **argv) {
     switch_tests(INITIAL_POLY_COUNT);
     test_begin = time(NULL);
 
-    while (!check_start()) {
+    while (phase != PHASE_FINAL) {
         do_frame();
         running_stats();
         check_switch();
