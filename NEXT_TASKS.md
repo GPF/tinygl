@@ -65,14 +65,15 @@ The current performance work has two complementary targets. The strip test at
 unlit `GL_TRIANGLE_STRIP` blocks use the native PVR strip path. The math test
 at `tests/dreamcast/tinyballs/` is a TinyGL counterpart to SH4ZAM's direct-PVR
 `bruces_balls`: rotating, lit spheres exercise transforms, normals, and
-`GL_NORMALIZE` identically in SH4ZAM-off/on builds. The Dreamcast clip shows
-surface breakup as the spheres rotate. Lit strips are therefore routed through
-TinyGL's per-triangle fallback while the PVR depth/transform behavior is
-investigated. TinyBalls performance counts are not a valid comparison yet;
-resolve and visually verify the rendering before repeating the A/B against
-`bruces_balls`. The test captures a `/pc/tinyballs.ppm` screenshot after 60
-frames; verify that delayed capture on hardware. Build steps and observed
-diagnostics are in `TESTING.md`.
+`GL_NORMALIZE` identically in SH4ZAM-off/on builds. The Dreamcast rotation
+breakup was traced to zero PVR OPB overflow blocks; using KOS's default of
+three fixed the missing patches, confirmed in a six-sphere hardware capture.
+Lit strips remain on TinyGL's per-triangle fallback. The first post-fix off/on runs both reached two spheres at the 55 FPS target
+(off 60.09 FPS, on 56.10 FPS). SH4ZAM reduced the transform interval from
+0.070 ms to 0.036 ms, while the one-run overall FPS did not improve. Repeat
+alternating variants before drawing a performance conclusion or comparing
+object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
+60 frames. Build steps and results are in `TESTING.md`.
 
 ## Recommended work order
 
@@ -197,14 +198,12 @@ diagnostics are in `TESTING.md`.
    behavior is unchanged. See `docs/strip_fast_path_investigation.md` for the
    design and hardware validation matrix. Real Dreamcast pixel comparison and
    matched benchmark runs remain pending; do not claim a performance gain yet.
-7. **Fix TinyBalls rotation breakup before benchmarking.** Use
-   `tests/dreamcast/tinyballs/` and its delayed screenshot capture to diagnose
-   the surface patches that disappear as the spheres rotate. Lit strips are
-   currently sent through the parity-ordered triangle fallback, so compare
-   transformed vertex/depth output and verify the settled PPM on the console.
-   Only after a correct hardware image, collect at least five alternating
-   SH4ZAM-off/on runs; then compare stable sphere count, CPU timings, and PVR
-   stats with KOS's `bruces_balls` as a separate direct-PVR reference.
+7. **Repeat the TinyBalls SH4ZAM performance comparison.** The rotation
+   breakup was fixed by enabling KOS's default three PVR OPB overflow blocks;
+   six-sphere captures are visually correct in both variants. The first off/on
+   runs held two spheres at 60.09 / 56.10 FPS, despite about half the transform
+   time with SH4ZAM. Collect at least five alternating runs, compare medians,
+   and keep `bruces_balls` as a separate direct-PVR reference.
 
 Keep each change small and add a visible hardware test scene alongside it.
 Inspect vertex flags, color packing, UV/depth mapping, alignment, cache

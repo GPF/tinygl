@@ -14,7 +14,7 @@ static const pvr_init_params_t tgl_pvr_params = {
   0,  /* Direct submission. */
   0,  /* No FSAA. */
   0,  /* Translucent autosort is unused. */
-  0,  /* No OPB overflow. */
+  3,  /* Extra OPBs prevent tile-bin overflow artifacts in dense scenes. */
   0   /* Use KOS's default vertex-buffer configuration. */
 };
 

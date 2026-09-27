@@ -158,15 +158,26 @@ is identical in SH4ZAM-off/on builds. `pvrmark_strips` remains the separate
 TinyGL backend-submission benchmark.
 
 Each latitude band is submitted as its own `GL_TRIANGLE_STRIP`. Lit strips are
-currently excluded from TinyGL's native PVR strip fast path and use the
-parity-ordered per-triangle fallback. This exclusion is a diagnostic safeguard:
-the physical Dreamcast clip shows sphere surfaces breaking up as the objects
-rotate, and the cause has not yet been isolated. Do not use the current
-TinyBalls FPS/object-count readings as a SH4ZAM performance comparison until
-the geometry renders correctly. The demo requests a one-shot screenshot after
-60 frames at `/pc/tinyballs.ppm`; use `kos-tool -m /tmp` to place the capture at
-`/tmp/tinyballs.ppm`. The delayed-capture build compiles, but a settled capture
-from that exact build still needs hardware verification.
+excluded from TinyGL's native PVR strip fast path and use the parity-ordered
+per-triangle fallback. The rotation breakup in the physical Dreamcast capture
+was caused by PVR tile-bin overflow: TinyGL initialized the PVR with zero OPB
+overflow blocks. Raising this to KOS's default of three removed the missing
+surface patches. A post-fix capture showed all six spheres intact while
+rotating. The one-shot screenshot is taken after 60 frames at
+`/pc/tinyballs.ppm`; `kos-tool -m /tmp` maps it to `/tmp/tinyballs.ppm`.
+
+First post-fix hardware A/B (KOS 2.3.0, 640x480 VGA; one run per variant):
+
+| TinyGL build | Stable spheres | Logical triangles/frame | FPS | Transform interval | Geometry interval | PVR registration | PVR render |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| SH4ZAM off | 2 | 1,600 | 60.09 | 0.070 ms | 16.517 ms | 16.281 ms | 3.355 ms |
+| SH4ZAM on | 2 | 1,600 | 56.10 | 0.036 ms | 16.742 ms | 18.982 ms | 3.344 ms |
+
+The off run measured 19.55 FPS at six spheres; the on run measured 20.03 FPS.
+Both six-sphere delayed captures showed intact rotating spheres. SH4ZAM cut
+the measured transform interval roughly in half, but the stable object count
+was unchanged and the single-run FPS was lower in the enabled build. Repeat at
+least five alternating runs before drawing a performance conclusion.
 
 Build and run both variants on the same console and video mode. Clean the
 library and test between builds because Make does not track compiler flags:
