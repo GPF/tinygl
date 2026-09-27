@@ -10,6 +10,7 @@
 #include <time.h>
 
 #include "GL/gl.h"
+#include "GL/tglprofile.h"
 
 enum {
     SPHERE_STACKS = 20,
@@ -39,6 +40,7 @@ static int search_phase = SEARCH_HALVE;
 static int refresh_rate = 60;
 static int frame_number;
 static time_t search_started;
+static time_t search_final_at;
 static float fps_ema = -1.0f;
 static float best_fps;
 static uint64_t transform_us;
@@ -93,6 +95,9 @@ static void setup(void) {
     GLfloat light_position[4] = { -0.45f, 0.70f, 1.0f, 0.0f };
 
     build_sphere_mesh();
+#ifdef TINYGL_PROFILE_STAGES
+    tgl_profile_clock = timer_us_gettime64;
+#endif
     vid_set_mode(DM_640x480_VGA, PM_RGB565);
     if (glInitPVR(640, 480) < 0) {
         printf("TinyBalls: PVR initialization failed\n");
@@ -196,6 +201,13 @@ static void reset_window(void) {
     geometry_us = 0;
     frame_us = 0;
     profile_frames = 0;
+#ifdef TINYGL_PROFILE_STAGES
+    tgl_profile_transform_us = 0;
+    tgl_profile_normal_us = 0;
+    tgl_profile_light_us = 0;
+    tgl_profile_submit_us = 0;
+    tgl_profile_viewport_us = 0;
+#endif
     search_started = time(NULL);
     printf("Testing %d balls: %d triangles/frame\n", ball_count,
            ball_count * TRIANGLES_PER_BALL);
@@ -211,6 +223,13 @@ static void print_window(const pvr_stats_t *stats) {
            transform_us / scale, geometry_us / scale, frame_us / scale,
            stats->reg_last_time / 1000000.0,
            stats->rnd_last_time / 1000000.0);
+#ifdef TINYGL_PROFILE_STAGES
+    printf("  stage breakdown/frame: eye+proj xform %.3f ms, normal xform "
+           "%.3f ms, lighting %.3f ms, viewport %.3f ms, PVR submit %.3f ms\n",
+           tgl_profile_transform_us / scale, tgl_profile_normal_us / scale,
+           tgl_profile_light_us / scale, tgl_profile_viewport_us / scale,
+           tgl_profile_submit_us / scale);
+#endif
 }
 
 static void advance_search(const pvr_stats_t *stats) {
@@ -254,14 +273,18 @@ static void advance_search(const pvr_stats_t *stats) {
     }
 
     if (search_phase == SEARCH_FINAL) {
+        search_final_at = time(NULL);
         if (best_ball_count > 0) {
             ball_count = best_ball_count;
             printf("Final stable load: %d balls, %d triangles/frame, "
-                   "%.2f fps, %.0f triangles/sec. Press Start to exit.\n",
+                   "%.2f fps, %.0f triangles/sec. Exiting automatically "
+                   "(temporary: not waiting for Start during profiling runs).\n",
                    ball_count, ball_count * TRIANGLES_PER_BALL, best_fps,
                    ball_count * TRIANGLES_PER_BALL * best_fps);
         } else {
-            printf("55 FPS target not reached at one ball. Press Start to exit.\n");
+            printf("55 FPS target not reached at one ball. Exiting "
+                   "automatically (temporary: not waiting for Start during "
+                   "profiling runs).\n");
         }
         fflush(stdout);
         return;
@@ -277,7 +300,12 @@ int main(int argc, char **argv) {
     setup();
     reset_window();
 
-    while (!start_pressed()) {
+    /* TODO: restore waiting on start_pressed() once profiling passes are
+     * done; auto-exit a few seconds after the final result is printed so
+     * runs don't need a controller press. */
+    while (!start_pressed() &&
+           !(search_phase == SEARCH_FINAL &&
+             time(NULL) >= search_final_at + 10)) {
         pvr_stats_t stats = { 0 };
         uint64_t start = timer_us_gettime64();
         draw_scene();

@@ -201,7 +201,7 @@ typedef struct GLContext {
   M4 matrix_model_view_inv;
   M4 matrix_model_projection;
   int matrix_model_projection_updated;
-  int matrix_model_projection_no_w_transform; 
+  int matrix_model_projection_no_w_transform;
   int apply_texture_matrix;
 
   /* viewport */
@@ -299,6 +299,20 @@ void gl_transform_to_viewport(GLContext *c,GLVertex *v);
 void gl_draw_triangle(GLContext *c,GLVertex *p0,GLVertex *p1,GLVertex *p2);
 void gl_draw_line(GLContext *c,GLVertex *p0,GLVertex *p1);
 void gl_draw_point(GLContext *c,GLVertex *p0);
+
+#ifdef TINYGL_PROFILE_STAGES
+/* Diagnostic per-stage timing hooks. Disabled by default; a host app sets
+ * tgl_profile_clock to a microsecond clock (e.g. timer_us_gettime64) and
+ * reads the accumulators back between frames. Zero overhead when
+ * TINYGL_PROFILE_STAGES is not defined. */
+#include <stdint.h>
+extern uint64_t (*tgl_profile_clock)(void);
+extern uint64_t tgl_profile_transform_us;
+extern uint64_t tgl_profile_normal_us;
+extern uint64_t tgl_profile_light_us;
+extern uint64_t tgl_profile_submit_us;
+extern uint64_t tgl_profile_viewport_us;
+#endif
 
 #ifdef TINYGL_USE_DREAMCAST_PVR
 int tgl_pvr_init(void);

@@ -420,8 +420,23 @@ static int tgl_pvr_prim(const void *cmd, size_t size) {
   return pvr_prim(cmd, size);
 }
 
+#ifdef TINYGL_PROFILE_STAGES
+static void tgl_pvr_draw_triangle_impl(GLContext *c, GLVertex *p0, GLVertex *p1,
+                                        GLVertex *p2);
+
 void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
                            GLVertex *p2) {
+  uint64_t t0 = tgl_profile_clock ? tgl_profile_clock() : 0;
+  tgl_pvr_draw_triangle_impl(c, p0, p1, p2);
+  if (tgl_profile_clock) tgl_profile_submit_us += tgl_profile_clock() - t0;
+}
+
+static void tgl_pvr_draw_triangle_impl(GLContext *c, GLVertex *p0, GLVertex *p1,
+                                        GLVertex *p2) {
+#else
+void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
+                           GLVertex *p2) {
+#endif
   GLVertex *vertices[3];
   int i;
 

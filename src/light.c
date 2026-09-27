@@ -217,6 +217,18 @@ void gl_shade_vertex(GLContext *c,GLVertex *v)
       d.X=l->position.v[0]-v->ec.v[0];
       d.Y=l->position.v[1]-v->ec.v[1];
       d.Z=l->position.v[2]-v->ec.v[2];
+#ifdef TINYGL_USE_SH4ZAM
+      {
+	  shz_vec3_t dv = shz_vec3_init(d.X, d.Y, d.Z);
+	  dist = shz_vec3_magnitude(dv);
+	  if (dist > 1E-10f) {
+	      shz_vec3_t dn = shz_vec3_normalize(dv);
+	      d.X = dn.x;
+	      d.Y = dn.y;
+	      d.Z = dn.z;
+	  }
+      }
+#else
       dist=sqrt(d.X*d.X+d.Y*d.Y+d.Z*d.Z);
       if (dist>1E-10f) {
         tmp=1/dist;
@@ -224,10 +236,15 @@ void gl_shade_vertex(GLContext *c,GLVertex *v)
         d.Y*=tmp;
         d.Z*=tmp;
       }
+#endif
       att=1.0f/(l->attenuation[0]+dist*(l->attenuation[1]+
 				     dist*l->attenuation[2]));
     }
+#ifdef TINYGL_USE_SH4ZAM
+    dot = shz_vec3_dot(shz_vec3_init(d.X, d.Y, d.Z), shz_vec3_init(n.X, n.Y, n.Z));
+#else
     dot=d.X*n.X+d.Y*n.Y+d.Z*n.Z;
+#endif
     if (twoside && dot < 0) dot = -dot;
     if (dot>0) {
       /* diffuse light */
@@ -268,12 +285,20 @@ void gl_shade_vertex(GLContext *c,GLVertex *v)
         s.Y=d.Y;
         s.Z=d.Z+1.0;
       }
+#ifdef TINYGL_USE_SH4ZAM
+      dot_spec = shz_vec3_dot(shz_vec3_init(n.X, n.Y, n.Z), shz_vec3_init(s.X, s.Y, s.Z));
+#else
       dot_spec=n.X*s.X+n.Y*s.Y+n.Z*s.Z;
+#endif
       if (twoside && dot_spec < 0) dot_spec = -dot_spec;
       if (dot_spec>0) {
         GLSpecBuf *specbuf;
         int idx;
+#ifdef TINYGL_USE_SH4ZAM
+        tmp = shz_vec3_magnitude(shz_vec3_init(s.X, s.Y, s.Z));
+#else
         tmp=sqrt(s.X*s.X+s.Y*s.Y+s.Z*s.Z);
+#endif
         if (tmp > 1E-3) {
           dot_spec=dot_spec / tmp;
         }

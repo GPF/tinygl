@@ -1,5 +1,14 @@
 #include "zgl.h"
 
+#ifdef TINYGL_PROFILE_STAGES
+uint64_t (*tgl_profile_clock)(void) = NULL;
+uint64_t tgl_profile_transform_us = 0;
+uint64_t tgl_profile_normal_us = 0;
+uint64_t tgl_profile_light_us = 0;
+uint64_t tgl_profile_submit_us = 0;
+uint64_t tgl_profile_viewport_us = 0;
+#endif
+
 void glopNormal(GLContext * c, GLParam * p)
 {
     V3 v;
@@ -156,8 +165,37 @@ static inline void gl_vertex_transform(GLContext * c, GLVertex * v)
     V4 *n;
 
     if (c->lighting_enabled) {
-	/* eye coordinates needed for lighting */
+#ifdef TINYGL_PROFILE_STAGES
+	uint64_t __tgl_prof_t0 = tgl_profile_clock ? tgl_profile_clock() : 0;
+#endif
 
+#ifdef TINYGL_USE_SH4ZAM
+	{
+	    /* Eye coordinates: full modelview * (coord, 1). XMTRX is reloaded
+	     * per vertex here since the lit path needs both the modelview and
+	     * projection matrices in turn, unlike the unlit path which can
+	     * keep one combined matrix loaded for the whole primitive. */
+	    shz_vec4_t coord4 = shz_vec4_init(v->coord.X, v->coord.Y, v->coord.Z, 1.0f);
+	    shz_vec4_t ec4, pc4;
+
+	    shz_xmtrx_load_transpose_unaligned_4x4(
+		(const float *)(const void *)c->matrix_stack_ptr[0]);
+	    ec4 = shz_xmtrx_transform_vec4(coord4);
+	    v->ec.X = ec4.x;
+	    v->ec.Y = ec4.y;
+	    v->ec.Z = ec4.z;
+	    v->ec.W = ec4.w;
+
+	    /* projection coordinates */
+	    shz_xmtrx_load_transpose_unaligned_4x4(
+		(const float *)(const void *)c->matrix_stack_ptr[1]);
+	    pc4 = shz_xmtrx_transform_vec4(ec4);
+	    v->pc.X = pc4.x;
+	    v->pc.Y = pc4.y;
+	    v->pc.Z = pc4.z;
+	    v->pc.W = pc4.w;
+	}
+#else
 	m = &c->matrix_stack_ptr[0]->m[0][0];
 	v->ec.X = (v->coord.X * m[0] + v->coord.Y * m[1] +
 		   v->coord.Z * m[2] + m[3]);
@@ -178,17 +216,46 @@ static inline void gl_vertex_transform(GLContext * c, GLVertex * v)
 		   v->ec.Z * m[10] + v->ec.W * m[11]);
 	v->pc.W = (v->ec.X * m[12] + v->ec.Y * m[13] +
 		   v->ec.Z * m[14] + v->ec.W * m[15]);
+#endif
 
-	m = &c->matrix_model_view_inv.m[0][0];
+#ifdef TINYGL_PROFILE_STAGES
+	if (tgl_profile_clock) {
+	    uint64_t __tgl_prof_t1 = tgl_profile_clock();
+	    tgl_profile_transform_us += __tgl_prof_t1 - __tgl_prof_t0;
+	    __tgl_prof_t0 = __tgl_prof_t1;
+	}
+#endif
+
 	n = &c->current_normal;
 
+#ifdef TINYGL_USE_SH4ZAM
+	{
+	    /* transform_vec3 treats the input as a direction (w=0), which
+	     * drops the translation column exactly like the scalar dot
+	     * products below did by never adding m[3]/m[7]/m[11]. */
+	    shz_vec3_t normal_in = shz_vec3_init(n->X, n->Y, n->Z);
+	    shz_vec3_t normal_out;
+
+	    shz_xmtrx_load_transpose_unaligned_4x4(
+		(const float *)(const void *)&c->matrix_model_view_inv);
+	    normal_out = shz_xmtrx_transform_vec3(normal_in);
+	    v->normal.X = normal_out.x;
+	    v->normal.Y = normal_out.y;
+	    v->normal.Z = normal_out.z;
+	}
+#else
+	m = &c->matrix_model_view_inv.m[0][0];
 	v->normal.X = (n->X * m[0] + n->Y * m[1] + n->Z * m[2]);
 	v->normal.Y = (n->X * m[4] + n->Y * m[5] + n->Z * m[6]);
 	v->normal.Z = (n->X * m[8] + n->Y * m[9] + n->Z * m[10]);
+#endif
 
 	if (c->normalize_enabled) {
 	    gl_V3_Norm(&v->normal);
 	}
+#ifdef TINYGL_PROFILE_STAGES
+	if (tgl_profile_clock) tgl_profile_normal_us += tgl_profile_clock() - __tgl_prof_t0;
+#endif
     } else {
 	/* no eye coordinates needed, no normal */
 	/* NOTE: W = 1 is assumed */
@@ -265,7 +332,13 @@ void glopVertex(GLContext * c, GLParam * p)
     /* color */
 
     if (c->lighting_enabled) {
+#ifdef TINYGL_PROFILE_STAGES
+	uint64_t __tgl_prof_light_t0 = tgl_profile_clock ? tgl_profile_clock() : 0;
+#endif
 	gl_shade_vertex(c, v);
+#ifdef TINYGL_PROFILE_STAGES
+	if (tgl_profile_clock) tgl_profile_light_us += tgl_profile_clock() - __tgl_prof_light_t0;
+#endif
     } else {
 	v->color = c->current_color;
     }
@@ -280,8 +353,15 @@ void glopVertex(GLContext * c, GLParam * p)
 	}
     }
     /* precompute the mapping to the viewport */
-    if (v->clip_code == 0)
+    if (v->clip_code == 0) {
+#ifdef TINYGL_PROFILE_STAGES
+	uint64_t __tgl_prof_vp_t0 = tgl_profile_clock ? tgl_profile_clock() : 0;
+#endif
 	gl_transform_to_viewport(c, v);
+#ifdef TINYGL_PROFILE_STAGES
+	if (tgl_profile_clock) tgl_profile_viewport_us += tgl_profile_clock() - __tgl_prof_vp_t0;
+#endif
+    }
 
     /* edge flag */
 
