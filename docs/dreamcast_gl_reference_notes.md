@@ -147,3 +147,51 @@ and hasn't been tried on hardware yet.
 TinyBalls' fallback path) -- likely smaller and lower-risk than the full
 GLdc-style batch-immediate-mode rewrite in §1, since the strip submission
 machinery already exists and is hardware-validated for the unlit case.
+
+Update (2026-09-27): **done, promoted to default.** See `NEXT_TASKS.md`
+item 8 -- the stray-line artifact that had blocked this was root-caused to
+degenerate pole triangles in the TinyBalls test mesh, not a strip-path bug;
+`glopEnd()`'s eligibility gate no longer excludes `lighting_enabled`.
+
+## 5. SH4ZAM matrix-multiply port -- attempted and reverted (2026-09-27)
+
+Tried porting `src/zmath.c`'s `gl_M4_Mul()`/`gl_M4_MulLeft()` (used by
+`glTranslate`/`glRotate`/`glMultMatrix`/`glFrustum` via `matrix.c`, and by
+`vertex.c`'s per-`glBegin` modelview*projection composition) to SH4ZAM,
+mirroring the existing per-vertex-transform and lighting ports. The
+approach: load operand A into XMTRX via the same
+`shz_xmtrx_load_transpose_unaligned_4x4()` already used elsewhere, then
+compute each column of the result as `shz_xmtrx_transform_vec4()` applied
+to the matching column of operand B -- built entirely from primitives
+already validated in production, no new assumption about SH4ZAM's
+"apply"/multiply-order semantics.
+
+**Reverted.** `pvr_smoke`'s P3 (translate+rotate transform) rendered fully
+black with this change -- the triangle vanished, presumably clipped after
+a corrupted transform. A debug build that dumped both the SH4ZAM result
+and a parallel scalar-reference computation for the first several calls
+showed **zero numeric difference** (`maxdiff=0` every time, including the
+exact translate+rotate matrices from the failing phase) -- the multiply
+itself is correct. Removing only the debug printf/reference-computation
+code (keeping the exact same multiply logic) made the corruption
+reappear; re-adding it made the image correct again, with no other change.
+
+**This points at a compiler code-generation or SH4ZAM inline-assembly
+clobber-list issue, not a logic bug in the multiply algorithm** --
+something register-allocation-sensitive that the debug code's extra local
+variables/calls happened to perturb out of the corrupted state. This is
+the kind of bug that could pass or fail testing depending on unrelated
+surrounding code changes, so it was reverted rather than shipped. The
+change is NOT in `src/` -- `zmath.c`/`zmath.h` are back to their original
+scalar-only state.
+
+**If revisited:** don't trust a single hardware pass/fail without first
+confirming the result is stable across at least two rebuilds with
+different unrelated code nearby (the opposite of what happened here).
+Worth checking whether `shz_xmtrx_load_transpose_unaligned_4x4()` and
+`shz_xmtrx_transform_vec4()`'s inline-asm clobber lists (`sh4zam` port,
+`shz_xmtrx_sh4.inl.h`) fully declare every FR/XF register they touch,
+particularly around the `frchg` back-bank swap in the load path -- an
+incomplete clobber list would let GCC keep a stale value live in a
+register the assembly silently overwrites, exactly matching what was
+observed.
