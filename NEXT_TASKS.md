@@ -186,9 +186,16 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
      default is not a reliable test. KOS could not create the `/pc/...` PPM
      screenshots, so this run verifies mode selection from the log, not visible
      rendering. Real non-VGA hardware validation remains useful.
-6. ~~Complete the PVR triangle-strip performance comparison.~~ **DONE
-   (2026-09-27)** for the numeric comparison; the visual-equivalence check
-   remains open (see below). Collected 5 alternating hardware A/B runs of
+6. **Complete the PVR triangle-strip performance comparison.** Data
+   collected (2026-09-27); **the SH4ZAM-off result below did not reproduce
+   on a second 5-run set the same day** (2,300 tri/frame median vs the
+   original 2,900 -- a ~20% gap, bimodal across the two sessions, not
+   explained by noise). Full detail and next steps in `TESTING.md`'s
+   "Correction: the SH4ZAM-off result above is not stable across sessions"
+   note. **Do not cite the numbers below as settled** until that's
+   root-caused and a much larger multi-session run set is collected; the
+   visual-equivalence check also remains open (see below). Original
+   (unconfirmed) 5 alternating hardware A/B runs of
    `tests/dreamcast/pvrmark_strips/` (SH4ZAM on/off) plus one reference run
    each of KOS's unmodified `pvrmark_strips_direct` and GLdc's
    `pvrmark_strips_gldc` (KOS 2.3.0, 640x480 VGA). Full numbers, stage
@@ -207,13 +214,14 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
      quantization edge, not noise. Ceiling reference only, not a like-for-like
      comparison.
    - GLdc `pvrmark_strips_gldc`: 2,783 tri/frame, 59.95 fps, 166,851 tri/sec
-     -- comparable triangle count to TinyGL, but its PVR registration stage
-     timed at ~4x faster than TinyGL's (3.3 ms vs 13.0-13.4 ms) despite
-     TinyGL's CPU-side stages being much closer (only ~3x GLdc's). This is a
-     new, concrete lead: real headroom appears to remain specifically in
-     TinyGL's PVR submission/registration path, not just its CPU-side
-     transform/build stages already addressed by the `sq_fast_cpy` batching
-     work and the native strip path. Worth its own follow-up investigation.
+     -- comparable triangle count to TinyGL's *original* SH4ZAM-off result
+     (2,900), but its PVR registration stage timed at ~4x faster than
+     TinyGL's (3.3 ms vs 13.0-13.4 ms) despite TinyGL's CPU-side stages
+     being much closer (only ~3x GLdc's). The stage-timing comparison is a
+     single-run-vs-single-run reading either way, so re-check it once
+     TinyGL's own SH4ZAM-off number is stabilized -- but a 3-4x registration
+     gap is unlikely to be explained away by the session-to-session
+     variance seen above. Worth its own follow-up investigation regardless.
    - **Still open:** the dedicated strip-vs-triangle hardware pixel
      comparison (visual equivalence of the native strip path against the
      `GL_TRIANGLES` fallback) has not been done. Do not claim the strip path

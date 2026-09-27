@@ -206,6 +206,42 @@ Findings:
   without also completing the pending strip-vs-triangle visual-equivalence
   check noted above.
 
+### Correction: the SH4ZAM-off result above is not stable across sessions (2026-09-27)
+
+A second, independent set of 5 SH4ZAM-off runs was collected later the same
+day (same console, same unchanged binary/commit) to confirm the result above.
+It did **not** reproduce: 2100, 2300, 2500, 2500, 2100 triangles/frame
+(55.21, 56.11, 55.82, 55.79, 55.24 fps; 115939, 129044, 139551, 139471,
+115999 triangles/sec) -- median 2,300 tri/frame, 55.79 fps, 129,044
+tri/sec, roughly 20% lower than the first set's 2,900 / 55.82 / 161,879.
+
+This is **bimodal, not just noisy**: the first set of 5 clustered tightly at
+2,900 tri/frame with nothing else nearby; the second set of 5 clustered at
+2,100-2,500 with nothing near 2,900. A combined median across all 10 runs
+(2,700 tri/frame) would misrepresent both clusters and is not reported as a
+finding here. Nothing in the binary or library changed between the two
+sessions (verified: both built from commit `f92ebc7`, confirmed via the
+ELF's embedded "SH4ZAM disabled" string).
+
+**Root cause not identified.** Candidates not yet ruled out: console
+thermal/warm-up state, network/dcload-console print latency perturbing the
+timed loop (the benchmark's own stage-timing `printf`s go out over the same
+live connection used to drive the search), or genuine PVR/TA scheduling
+variance at this triangle-count range. The coarse search step sizes
+(+2,500/-200) mean the true steady-state threshold could plausibly sit
+anywhere in a wide band and a 5-run sample only sees whichever narrow slice
+of that band the console happened to be in that session.
+
+**Practical implication:** treat the 2,900 tri/frame / 161,879 tri/sec
+SH4ZAM-off figure (and, by extension, the SH4ZAM-on comparison and the GLdc
+head-to-head above, all collected in the same first session) as one
+data point, not a settled number. Before relying on this benchmark for a
+real performance claim: collect at least 10-15 runs per variant across
+multiple sessions (not back-to-back in one sitting), and investigate
+whether disabling the per-5-second stage-timing `printf`s changes the
+result -- that would confirm or rule out console-print latency as the
+cause.
+
 ## Dreamcast TinyBalls math stress scene
 
 `tests/dreamcast/tinyballs/` is the TinyGL counterpart to SH4ZAM's direct-PVR
