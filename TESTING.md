@@ -220,9 +220,11 @@ polar bands (stack 0 and the last stack), which collapse to a single point at
 the pole and are drawn as a `GL_TRIANGLE_FAN` instead -- a `GL_TRIANGLE_STRIP`
 over a collapsed ring is a strip of near-zero-area triangles, which was traced
 on hardware to a stray one-pixel-tall line artifact past the sphere's
-silhouette (root cause and fix: NEXT_TASKS.md item 8). Lit strips are
-excluded from TinyGL's native PVR strip fast path and use the parity-ordered
-per-triangle fallback. The rotation breakup in the physical Dreamcast capture
+silhouette (root cause and fix: NEXT_TASKS.md item 8). Lit strips use
+TinyGL's native PVR strip fast path by default now (see item 8's DONE note);
+only non-fill polygon modes, culling, clipping, and non-`GL_RENDER` modes
+still fall back to the parity-ordered per-triangle route. The rotation
+breakup in the physical Dreamcast capture
 was caused by PVR tile-bin overflow: TinyGL initialized the PVR with zero OPB
 overflow blocks. Raising this to KOS's default of three removed the missing
 surface patches. A post-fix capture showed all six spheres intact while
@@ -239,8 +241,46 @@ First post-fix hardware A/B (KOS 2.3.0, 640x480 VGA; one run per variant):
 The off run measured 19.55 FPS at six spheres; the on run measured 20.03 FPS.
 Both six-sphere delayed captures showed intact rotating spheres. SH4ZAM cut
 the measured transform interval roughly in half, but the stable object count
-was unchanged and the single-run FPS was lower in the enabled build. Repeat at
-least five alternating runs before drawing a performance conclusion.
+was unchanged and the single-run FPS was lower in the enabled build.
+
+### Five-run comparison (work-order item 7, 2026-09-27)
+
+Five alternating full runs per variant (KOS 2.3.0, 640x480 VGA,
+`DC_IP=192.168.0.128`, default `TINYBALLS_DISABLE_LIGHTING=0` i.e. lighting
+enabled, lit strips now on the native PVR path per item 8). Each run's FPS
+search auto-exits about 10 seconds after reaching `SEARCH_FINAL`, so no
+`Start` press or manual reset was needed between runs -- confirmed by
+`Program returned 0` after every run.
+
+| Build | Runs (fps) | Runs (tri/sec) | Median fps | Median tri/sec |
+|---|---|---|---:|---:|
+| SH4ZAM off | 60.08, 60.12, 60.12, 60.12, 56.18 | 144180, 144279, 144279, 144279, 134841 | 60.12 | 144,279 |
+| SH4ZAM on | 60.09, 56.18, 60.09, 60.09, 60.09 | 144208, 134842, 144208, 144207, 144207 | 60.09 | 144,207 |
+
+All 10 runs (both variants) converged on the same load: 3 balls, 2,400
+triangles/frame. Stage timings at that converged load (representative run,
+each variant):
+
+| Build | Transform | Geometry | Frame | PVR registration | PVR render |
+|---|---:|---:|---:|---:|---:|
+| SH4ZAM off | 0.115 ms | 16.481 ms | 16.644 ms | 19.084 ms | 3.487 ms |
+| SH4ZAM on | 0.054 ms | 16.569 ms | 16.670 ms | 19.024 ms | 3.465 ms |
+
+**Conclusion, with real statistical power this time (5 runs/variant, not 1):
+SH4ZAM makes no measurable difference to TinyBalls' overall throughput.**
+Median fps (60.12 vs 60.09) and median tri/sec (144,279 vs 144,207) are
+within noise of each other, and both variants converge on the identical
+ball/triangle count every single run. The one consistent effect is
+transform-stage time, roughly halved as before (0.115 ms -> 0.054 ms, ~53%),
+but that stage is such a small fraction of the ~16.6 ms frame budget
+(PVR registration alone is larger, at ~19 ms) that halving it doesn't move
+the needle. This is the same conclusion reached independently for
+`pvrmark_strips` (work-order item 6): SH4ZAM's current integration helps
+CPU-side transform work, but this project's PVR-registration-bound
+workloads don't have enough CPU-bound headroom left for that win to show up
+in FPS or triangle throughput. `bruces_balls` remains the separate
+direct-PVR reference and was not re-run as part of this comparison (no
+GL API, not a like-for-like target).
 
 Build and run both variants on the same console and video mode. Clean the
 library and test between builds because Make does not track compiler flags:

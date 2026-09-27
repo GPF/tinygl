@@ -227,12 +227,22 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
    Ordinary `GL_TRIANGLES` behavior is unchanged. See
    `docs/strip_fast_path_investigation.md` for the design and hardware
    validation matrix.
-7. **Repeat the TinyBalls SH4ZAM performance comparison.** The rotation
-   breakup was fixed by enabling KOS's default three PVR OPB overflow blocks;
-   six-sphere captures are visually correct in both variants. The first off/on
-   runs held two spheres at 60.09 / 56.10 FPS, despite about half the transform
-   time with SH4ZAM. Collect at least five alternating runs, compare medians,
-   and keep `bruces_balls` as a separate direct-PVR reference.
+7. ~~Repeat the TinyBalls SH4ZAM performance comparison.~~ **DONE
+   (2026-09-27).** Collected 5 alternating runs per variant (no `Start`
+   press needed -- TinyBalls' FPS search auto-exits ~10s after converging).
+   Full numbers in `TESTING.md`'s "Five-run comparison (work-order item 7,
+   2026-09-27)". Result: SH4ZAM makes **no measurable difference** to
+   overall throughput here -- median 60.12 fps / 144,279 tri/sec (off) vs
+   60.09 fps / 144,207 tri/sec (on), both well within run-to-run noise, and
+   all 10 runs (both variants) converged on the identical load (3 balls,
+   2,400 tri/frame) every time. Transform-stage time was consistently
+   roughly halved with SH4ZAM (as the single-run data had suggested), but
+   that stage is a small fraction of the ~16.6 ms frame budget (PVR
+   registration alone is larger, ~19 ms), so the CPU-side win doesn't
+   surface in FPS or triangle throughput. This independently confirms the
+   same pattern found in item 6's `pvrmark_strips` comparison.
+   `bruces_balls` was kept as the separate direct-PVR reference and was not
+   re-run here (no GL API, not a like-for-like target for this comparison).
 
 8. ~~Extend the native PVR strip path (`tgl_pvr_draw_strip`) to lit
    geometry.~~ **DONE (2026-09-27).** Root cause found and fixed (see
