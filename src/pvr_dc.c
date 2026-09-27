@@ -497,26 +497,31 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
     return;
   }
 
-  for (i = 0; i < 3; ++i) {
-    pvr_vertex_t vertex = { 0 };
-    uint32_t r = tgl_pvr_color_component(vertices[i]->color.v[0]);
-    uint32_t g = tgl_pvr_color_component(vertices[i]->color.v[1]);
-    uint32_t b = tgl_pvr_color_component(vertices[i]->color.v[2]);
-    uint32_t a = tgl_pvr_color_component(vertices[i]->color.v[3]);
+  {
+    /* Build all 3 vertices contiguously, then push them to the TA in one
+     * sq_fast_cpy() call instead of one pvr_prim() (== one sq_fast_cpy())
+     * call per vertex. Safe: pvr_list_begin() already holds the SQ lock for
+     * the whole list (see KOS's pvr_scene.c), and pvr_vertex_t is exactly
+     * one 32-byte, 32-byte-aligned TA block, so 3 of them back-to-back are
+     * exactly what sq_fast_cpy()'s "n 32-byte blocks" contract expects. */
+    pvr_vertex_t verts[3] = { { 0 } };
 
-    vertex.flags = (i == 2) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
-    vertex.x = (float)vertices[i]->zp.x;
-    vertex.y = (float)vertices[i]->zp.y;
-    vertex.z = (float)vertices[i]->zp.z / (float)(1u << 30);
-    if (vertex.z < 0.0f) vertex.z = 0.0f;
-    if (vertex.z > 1.0f) vertex.z = 1.0f;
-    vertex.argb = (a << 24) | (r << 16) | (g << 8) | b;
+    for (i = 0; i < 3; ++i) {
+      uint32_t r = tgl_pvr_color_component(vertices[i]->color.v[0]);
+      uint32_t g = tgl_pvr_color_component(vertices[i]->color.v[1]);
+      uint32_t b = tgl_pvr_color_component(vertices[i]->color.v[2]);
+      uint32_t a = tgl_pvr_color_component(vertices[i]->color.v[3]);
 
-    if (pvr_prim(&vertex, sizeof(vertex)) < 0) {
-      tgl_pvr_submission_errors++;
-      fprintf(stderr, "TinyGL PVR: vertex submission failed\n");
-      return;
+      verts[i].flags = (i == 2) ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+      verts[i].x = (float)vertices[i]->zp.x;
+      verts[i].y = (float)vertices[i]->zp.y;
+      verts[i].z = (float)vertices[i]->zp.z / (float)(1u << 30);
+      if (verts[i].z < 0.0f) verts[i].z = 0.0f;
+      if (verts[i].z > 1.0f) verts[i].z = 1.0f;
+      verts[i].argb = (a << 24) | (r << 16) | (g << 8) | b;
     }
+
+    sq_fast_cpy(SQ_MASK_DEST(PVR_TA_INPUT), verts, 3);
   }
 }
 
@@ -545,21 +550,36 @@ void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
     return;
   }
 
-  for (i = 0; i < count; ++i) {
-    pvr_vertex_t vertex = { 0 };
-    tgl_pvr_set_vertex(&vertex, &vertices[i], (float)vertices[i].zp.x,
-                       (float)vertices[i].zp.y, i == count - 1);
-    if (textured) {
-      vertex.u = vertices[i].tex_coord.X;
-      vertex.v = vertices[i].tex_coord.Y;
-      vertex.argb = 0xFFFFFFFF;
-    }
-    if (tgl_pvr_prim(&vertex, sizeof(vertex)) < 0) {
-      tgl_pvr_submission_errors++;
-      fprintf(stderr, "TinyGL PVR: strip vertex submission failed\n");
-      return;
+  /* Push vertices to the TA in fixed-size batches via one sq_fast_cpy() per
+   * batch instead of one pvr_prim() (== one sq_fast_cpy()) call per vertex.
+   * Safe: pvr_list_begin() already holds the SQ lock for the whole list
+   * (see KOS's pvr_scene.c), and pvr_vertex_t is exactly one 32-byte,
+   * 32-byte-aligned TA block. A fixed batch buffer (rather than sizing to
+   * `count`) keeps stack use bounded regardless of strip length. */
+#define TGL_PVR_STRIP_BATCH 32
+  {
+    pvr_vertex_t verts[TGL_PVR_STRIP_BATCH];
+    int batch_start;
+
+    for (batch_start = 0; batch_start < count; batch_start += TGL_PVR_STRIP_BATCH) {
+      int batch_count = count - batch_start;
+      if (batch_count > TGL_PVR_STRIP_BATCH) batch_count = TGL_PVR_STRIP_BATCH;
+
+      for (i = 0; i < batch_count; ++i) {
+	int idx = batch_start + i;
+	tgl_pvr_set_vertex(&verts[i], &vertices[idx], (float)vertices[idx].zp.x,
+			   (float)vertices[idx].zp.y, idx == count - 1);
+	if (textured) {
+	  verts[i].u = vertices[idx].tex_coord.X;
+	  verts[i].v = vertices[idx].tex_coord.Y;
+	  verts[i].argb = 0xFFFFFFFF;
+	}
+      }
+
+      sq_fast_cpy(SQ_MASK_DEST(PVR_TA_INPUT), verts, batch_count);
     }
   }
+#undef TGL_PVR_STRIP_BATCH
 }
 
 void tgl_pvr_flush(void) {
