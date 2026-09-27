@@ -8,6 +8,20 @@
 #define NUM_PHASES 24
 #define FRAME_LIMIT (PHASE_FRAMES * NUM_PHASES)
 
+/* Phase at which the backend should simulate one PVR submission failure, when
+ * the smoke test is built with -DTGL_PVR_TEST_INJECT_FAIL. Overridable per
+ * build so a different phase can be targeted. Default targets a single solid
+ * polygon phase so the failure and later recovery are both observable. */
+#ifndef TGL_PVR_TEST_INJECT_PHASE
+#  define TGL_PVR_TEST_INJECT_PHASE 10
+#endif
+
+/* Test-only backend hook (declared in src/zgl.h under the same guard). The
+ * smoke test does not include src/zgl.h, so re-declare it locally here. */
+#ifdef TGL_PVR_TEST_INJECT_FAIL
+void tgl_pvr_test_arm_fail_next(void);
+#endif
+
 /* Select the requested resolution family. Override on the build command line
  * to validate another size, e.g. -DPVR_SMOKE_VIDEO_MODE=DM_320x240. Startup
  * then picks a supported KOS refresh mode and derives the viewport from it. */
@@ -266,20 +280,47 @@ static void draw_poly_fill(void) {
     draw_ccw_triangle((float[]){0.0f, 1.0f, 0.0f}); /* green */
 }
 
-/* Polygon mode LINE: no-op on the PVR backend -> blank screen (documented). */
+/* Polygon mode LINE plus direct line primitives; distinct colors expose
+ * winding, endpoint order, horizontal/vertical/diagonal, and clipping. */
 static void draw_poly_line(void) {
-    reset_modelview();
-    glDisable(GL_CULL_FACE);
-    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    draw_ccw_triangle((float[]){0.0f, 1.0f, 0.0f}); /* green */
+  reset_modelview();
+  glDisable(GL_CULL_FACE);
+  glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+  draw_ccw_triangle((float[]){0.0f, 1.0f, 0.0f}); /* green */
+
+  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+  glColor3f(1.0f, 1.0f, 1.0f);
+  glBegin(GL_LINES);
+  glVertex2f(-0.8f, -0.7f); glVertex2f( 0.8f, -0.7f); /* horizontal */
+  glVertex2f(-0.7f, -0.4f); glVertex2f(-0.7f,  0.4f); /* vertical */
+  glVertex2f( 0.8f, -0.4f); glVertex2f( 0.3f,  0.4f); /* reversed */
+  glVertex2f(-1.3f,  0.0f); glVertex2f(-0.2f,  0.0f); /* clipped */
+  glEnd();
+  glColor3f(1.0f, 1.0f, 0.0f);
+  glBegin(GL_LINE_LOOP);
+  glVertex2f(0.25f, 0.25f);
+  glVertex2f(0.75f, 0.25f);
+  glVertex2f(0.75f, 0.65f);
+  glVertex2f(0.25f, 0.65f);
+  glEnd();
 }
 
-/* Polygon mode POINT: no-op on the PVR backend -> blank screen (documented). */
+/* Polygon mode POINT plus direct GL_POINTS primitives. */
 static void draw_poly_point(void) {
-    reset_modelview();
-    glDisable(GL_CULL_FACE);
-    glPolygonMode(GL_FRONT_AND_BACK, GL_POINT);
-    draw_ccw_triangle((float[]){0.0f, 1.0f, 1.0f}); /* cyan */
+  reset_modelview();
+  glDisable(GL_CULL_FACE);
+  glPolygonMode(GL_FRONT_AND_BACK, GL_POINT);
+  draw_ccw_triangle((float[]){0.0f, 1.0f, 1.0f}); /* cyan */
+
+  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+  glColor3f(1.0f, 1.0f, 0.0f);
+  glBegin(GL_POINTS);
+  glVertex2f(-0.8f, -0.7f);
+  glVertex2f(-0.4f, -0.7f);
+  glVertex2f( 0.0f, -0.7f);
+  glVertex2f( 0.4f, -0.7f);
+  glVertex2f( 0.8f, -0.7f);
+  glEnd();
 }
 
 static void draw_depth_triangle(float z, float r, float g, float b) {
@@ -561,8 +602,8 @@ static const char *phase_label(int phase) {
     case 8: return "P9 cull front + CW";
     case 9: return "P10 cull front+back";
     case 10: return "P11 polygon fill";
-    case 11: return "P12 polygon line (no-op PVR)";
-    case 12: return "P13 polygon point (no-op PVR)";
+    case 11: return "P12 polygon and direct lines";
+    case 12: return "P13 polygon and direct points";
     case 13: return "P14 depth LESS far then near";
     case 14: return "P15 depth LESS near then far";
     case 15: return "P16 depth writes disabled";
@@ -650,6 +691,13 @@ int main(int argc, char **argv) {
             glDisable(GL_TEXTURE_2D);
             printf("pvr_smoke: --- %s (frame %d) ---\n",
                    phase_label(phase), frame + 1);
+#ifdef TGL_PVR_TEST_INJECT_FAIL
+            /* Arm the backend to simulate one solid-polygon submission
+             * failure during this phase. */
+            if (phase == TGL_PVR_TEST_INJECT_PHASE) {
+                tgl_pvr_test_arm_fail_next();
+            }
+#endif
         }
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

@@ -300,9 +300,18 @@ void gl_draw_point(GLContext *c,GLVertex *p0);
 int tgl_pvr_init(void);
 void tgl_pvr_shutdown(void);
 void tgl_pvr_set_clear_color(float r,float g,float b);
+void tgl_pvr_draw_point(GLContext *c,GLVertex *p0);
+void tgl_pvr_draw_line(GLContext *c,GLVertex *p0,GLVertex *p1);
 void tgl_pvr_draw_triangle(GLContext *c,GLVertex *p0,GLVertex *p1,
                            GLVertex *p2);
 void tgl_pvr_flush(void);
+
+/* Test-only: arm the backend to simulate one polygon-header submission
+ * failure. Only compiled when the smoke test builds with
+ * -DTGL_PVR_TEST_INJECT_FAIL. */
+#ifdef TGL_PVR_TEST_INJECT_FAIL
+void tgl_pvr_test_arm_fail_next(void);
+#endif
 #endif
 
 void gl_draw_triangle_point(GLContext *c,

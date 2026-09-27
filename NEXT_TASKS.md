@@ -28,9 +28,10 @@ hardware.
 
 The backend currently has these known gaps:
 
-- Points and lines produce no PVR output.
-- GL polygon LINE/POINT modes produce no PVR output (documented no-op; real
-  line/point emission would need new primitive submission in `pvr_dc.c`).
+- Points, lines, and GL polygon LINE/POINT modes now emit PVR triangle strips
+  in `src/pvr_dc.c`. The one-pixel point/line paths, clipped direct lines,
+  line loops, and polygon modes are hardware-tested in `TESTING.md`. Configurable
+  `glPointSize`/`glLineWidth` state is not part of TinyGL's current API.
 - GL culling and polygon FILL are translated to PVR behavior and tested on
   hardware (see `TESTING.md`). `pvr_dc.c::tgl_pvr_flush()` now commits the
   background on no-op frames so culled/no-op phases render black.
@@ -42,19 +43,29 @@ The backend currently has these known gaps:
   (`GL_SRC_COLOR`, `GL_ONE_MINUS_SRC_COLOR`, `GL_SRC_ALPHA_SATURATE`) fall back
   to a source-only factor; non-`GL_FUNC_ADD` blend equations and
   `GL_BLEND_COLOR` are unhandled and documented as unsupported.
-- Video-mode and viewport behavior beyond the fixed 640x480 smoke setup has
-  not been validated.
-- PVR submission errors are logged, but failure recovery and state handling
-  have not been exercised.
+- Video-mode/viewport sizing is hardware-tested at 320x240, 640x480, and
+  768x480. The 768x576 PAL mode was selected but produced black captures on the
+  NTSC/VGA test console; visible PAL output and the non-VGA refresh picker still
+  need PAL/non-VGA hardware.
+- PVR submission-error reporting and recovery are hardware-tested with the
+  build-time one-shot simulated failure. The injected header failure was
+  followed by successful rendering through all 24 smoke phases and exactly one
+  submission error at shutdown (see `TESTING.md`). Real KOS-generated failure
+  behavior is not exercised; the hook simulates the `pvr_prim()` error return.
+
+GLdc sample compatibility is a future goal. First finish TinyGL's own
+Dreamcast PVR implementation and its focused tests; then use GLdc samples to
+prioritize API and backend additions.
 
 ## Recommended work order
 
 1. ~~Map GL culling and polygon mode state to PVR behavior; add front/back
    winding and fill/line/point mode tests.~~ **DONE (2026-09-26).** Culling
-   works via `clip.c` geometry; FILL, LINE (no-op), POINT (no-op), and
-   `GL_FRONT_AND_BACK` culling for both windings are verified on hardware in
-   `TESTING.md`. Real LINE/POINT PVR emission is still a future item (needs new
-   primitive submission in `pvr_dc.c`).
+   works via `clip.c` geometry; FILL, LINE, POINT, and `GL_FRONT_AND_BACK`
+   culling for both windings are verified on hardware in `TESTING.md`. PVR
+   point/line emission uses 1x1 and one-pixel-wide triangle strips; direct
+   points, direct lines, clipped lines, line loops, and triangle polygon modes
+   pass the 640x480 smoke test.
 2. ~~Implement GL depth state: map transformed Z to PVR Z, honor depth
    function and depth mask, and test overlapping triangles in both draw
    orders.~~ **DONE (2026-09-26).** Four visible cases passed on real hardware:
@@ -138,8 +149,25 @@ The backend currently has these known gaps:
    - **Submission errors:** all four hardware runs (320x240,
      640x480, 768x480, and 768x576) completed without submission-error
      messages. The VGA startup path selected 60Hz directly. The non-VGA picker
-     and forced-failure behavior remain untested because the former needs a
-     non-VGA setup and KOS submission failures are difficult to induce.
+     still needs a real-hardware check. Forced-failure behavior is now covered
+     by a build-time one-shot injection test (see
+     "PVR submission-error one-shot failure injection test" in
+     `TESTING.md`): a `TGL_PVR_TEST_INJECT_FAIL`-gated wrapper in
+     `src/pvr_dc.c` simulates one KOS `pvr_prim()` returning `-1` on the solid
+     polygon-header path, exercises the `tgl_pvr_submission_errors` counting,
+     half-open list cleanup, and fresh-scene recovery, and reports exactly
+     `1 submission error(s)` at shutdown. The injection is a **simulated** KOS
+     error contract (no PVR command queue is touched, so the console cannot
+     hang); it is not a hardware-generated failure and is disabled in normal
+     builds. Run the **test** ELF on real non-VGA hardware to confirm the
+     recovery path.
+   - **Flycast picker check:** the non-VGA picker was exercised in Flycast and
+     selected `DM_320x240_PAL` (50 Hz), confirming the 50 Hz choice reaches
+     `vid_set_mode()`. Flycast reported `flashrom_get_region: unknown code
+     '00001'`; this emulator region code is not recognized, so its regional
+     default is not a reliable test. KOS could not create the `/pc/...` PPM
+     screenshots, so this run verifies mode selection from the log, not visible
+     rendering. Real non-VGA hardware validation remains useful.
 
 Keep each change small and add a visible hardware test scene alongside it.
 Inspect vertex flags, color packing, UV/depth mapping, alignment, cache

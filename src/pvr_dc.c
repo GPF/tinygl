@@ -1,6 +1,7 @@
 #include "zgl.h"
 
 #include <kos.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <kos/cache.h>
@@ -55,6 +56,11 @@ static uint16_t tgl_pvr_txr_src[256 * 256] __attribute__((aligned(2048)));
 static void *tgl_pvr_last_pixmap;
 static int tgl_pvr_txr_src_ready;
 
+static int tgl_pvr_prim(const void *cmd, size_t size);
+static void tgl_pvr_update_header(GLContext *c);
+static void tgl_pvr_begin_scene(void);
+static void tgl_pvr_select_list(int blend_enabled);
+
 int tgl_pvr_init(void) {
   pvr_poly_cxt_t context;
 
@@ -91,6 +97,95 @@ static uint32_t tgl_pvr_color_component(float value) {
   if (value < 0.0f) value = 0.0f;
   if (value > 1.0f) value = 1.0f;
   return (uint32_t)(value * 255.0f + 0.5f);
+}
+
+static void tgl_pvr_set_vertex(pvr_vertex_t *vertex, const GLVertex *source,
+                               float x, float y, int last) {
+  uint32_t r = tgl_pvr_color_component(source->color.v[0]);
+  uint32_t g = tgl_pvr_color_component(source->color.v[1]);
+  uint32_t b = tgl_pvr_color_component(source->color.v[2]);
+  uint32_t a = tgl_pvr_color_component(source->color.v[3]);
+
+  vertex->flags = last ? PVR_CMD_VERTEX_EOL : PVR_CMD_VERTEX;
+  vertex->x = x;
+  vertex->y = y;
+  vertex->z = (float)source->zp.z / (float)(1u << 30);
+  if (vertex->z < 0.0f) vertex->z = 0.0f;
+  if (vertex->z > 1.0f) vertex->z = 1.0f;
+  vertex->argb = (a << 24) | (r << 16) | (g << 8) | b;
+}
+
+static int tgl_pvr_submit_header(GLContext *c) {
+  tgl_pvr_update_header(c);
+  if (tgl_pvr_prim(&tgl_pvr_header, sizeof(tgl_pvr_header)) < 0) {
+    tgl_pvr_submission_errors++;
+    fprintf(stderr, "TinyGL PVR: polygon header submission failed\n");
+    return -1;
+  }
+  return 0;
+}
+
+static void tgl_pvr_submit_quad(const GLVertex *sources[4],
+                                float xy[4][2]) {
+  int i;
+  for (i = 0; i < 4; ++i) {
+    pvr_vertex_t vertex = { 0 };
+    tgl_pvr_set_vertex(&vertex, sources[i], xy[i][0], xy[i][1], i == 3);
+    if (pvr_prim(&vertex, sizeof(vertex)) < 0) {
+      tgl_pvr_submission_errors++;
+      fprintf(stderr, "TinyGL PVR: vertex submission failed\n");
+      return;
+    }
+  }
+}
+
+void tgl_pvr_draw_point(GLContext *c, GLVertex *p0) {
+  const GLVertex *sources[4] = { p0, p0, p0, p0 };
+  const float x = (float)p0->zp.x;
+  const float y = (float)p0->zp.y;
+  float xy[4][2] = {
+    { x,     y     }, { x + 1, y     },
+    { x + 1, y + 1 }, { x,     y + 1 }
+  };
+
+  tgl_pvr_begin_scene();
+  if (!tgl_pvr_scene_active) return;
+  tgl_pvr_select_list(c->blend_enabled);
+  if (!tgl_pvr_list_active || tgl_pvr_submit_header(c) < 0) return;
+  tgl_pvr_submit_quad(sources, xy);
+}
+
+void tgl_pvr_draw_line(GLContext *c, GLVertex *p0, GLVertex *p1) {
+  const float x0 = (float)p0->zp.x;
+  const float y0 = (float)p0->zp.y;
+  const float x1 = (float)p1->zp.x;
+  const float y1 = (float)p1->zp.y;
+  const float dx = x1 - x0;
+  const float dy = y1 - y0;
+  const float length_sq = dx * dx + dy * dy;
+  float nx, ny;
+  const GLVertex *sources[4] = { p0, p0, p1, p1 };
+  float xy[4][2];
+
+  if (length_sq == 0.0f) {
+    tgl_pvr_draw_point(c, p0);
+    return;
+  }
+  {
+    const float half_width = 0.5f / sqrtf(length_sq);
+    nx = -dy * half_width;
+    ny =  dx * half_width;
+  }
+  xy[0][0] = x0 + nx; xy[0][1] = y0 + ny;
+  xy[1][0] = x0 - nx; xy[1][1] = y0 - ny;
+  xy[2][0] = x1 + nx; xy[2][1] = y1 + ny;
+  xy[3][0] = x1 - nx; xy[3][1] = y1 - ny;
+
+  tgl_pvr_begin_scene();
+  if (!tgl_pvr_scene_active) return;
+  tgl_pvr_select_list(c->blend_enabled);
+  if (!tgl_pvr_list_active || tgl_pvr_submit_header(c) < 0) return;
+  tgl_pvr_submit_quad(sources, xy);
 }
 
 /* Map a GL blend factor to a PVR blend mode. The PVR has no mode for
@@ -286,6 +381,43 @@ static void tgl_pvr_update_txr_header(GLContext *c) {
   tgl_pvr_txr_header_pixmap = pixmap;
 }
 
+/* Test-only one-shot PVR submission failure injection.
+ *
+ * Only active when the smoke test is built with -DTGL_PVR_TEST_INJECT_FAIL.
+ * Normal builds define neither the state nor the arming hook.
+ */
+#ifdef TGL_PVR_TEST_INJECT_FAIL
+static int tgl_pvr_test_fail_next;  /* armed by tgl_pvr_test_arm_fail_next() */
+static int tgl_pvr_test_fail_fired; /* records that the injection fired     */
+
+void tgl_pvr_test_arm_fail_next(void) {
+  tgl_pvr_test_fail_next = 1;
+}
+#endif
+
+/* Primitive submission entry point.
+ *
+ * Normal builds: a thin pass-through to the KOS API, so submission behavior is
+ * unchanged. When TGL_PVR_TEST_INJECT_FAIL is defined, this wrapper simulates
+ * one KOS pvr_prim() returning -1 so the backend's error accounting, list
+ * cleanup, and recovery can be exercised. The simulation does NOT enqueue the
+ * command and leaves the list open, matching KOS's contract when pvr_prim()
+ * rejects a primitive (e.g. arena full). This is a controlled, one-shot,
+ * non-destructive test simulation -- it is not a hardware-generated failure.
+ */
+static int tgl_pvr_prim(const void *cmd, size_t size) {
+#ifdef TGL_PVR_TEST_INJECT_FAIL
+  if (tgl_pvr_test_fail_next) {
+    tgl_pvr_test_fail_next = 0;
+    tgl_pvr_test_fail_fired = 1;
+    fprintf(stderr,
+            "TinyGL PVR TEST: simulating one polygon-header submission failure\n");
+    return -1;
+  }
+#endif
+  return pvr_prim(cmd, size);
+}
+
 void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
                            GLVertex *p2) {
   GLVertex *vertices[3];
@@ -339,7 +471,10 @@ void tgl_pvr_draw_triangle(GLContext *c, GLVertex *p0, GLVertex *p1,
 
   tgl_pvr_update_header(c);
 
-  if (pvr_prim(&tgl_pvr_header, sizeof(tgl_pvr_header)) < 0) {
+  /* Route the solid polygon header through tgl_pvr_prim(). Normal builds are
+   * a thin pass-through to pvr_prim(); the smoke test builds with
+   * -DTGL_PVR_TEST_INJECT_FAIL to inject one controlled failure here. */
+  if (tgl_pvr_prim(&tgl_pvr_header, sizeof(tgl_pvr_header)) < 0) {
     tgl_pvr_submission_errors++;
     fprintf(stderr, "TinyGL PVR: polygon header submission failed\n");
     return;

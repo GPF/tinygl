@@ -2,8 +2,8 @@
 
 This guide covers the current software renderer, the opt-in SH4ZAM math path,
 and the Dreamcast PVR smoke test. The PVR smoke test currently verifies filled
-and textured triangles, culling, polygon modes, depth state, and blend modes.
-Point/line PVR emission is still not covered.
+and textured triangles, culling, polygon modes, depth state, blend modes,
+points, and lines.
 
 ## Host build and examples
 
@@ -170,6 +170,22 @@ triangle, or LINE/POINT mode) left the previous frame retained on the display.
 `tgl_pvr_flush()` now begins and finishes an empty scene when nothing was
 drawn, committing the background color. After this fix, phases 7, 8, 12, 13
 render black as expected. (See `src/pvr_dc.c`.)
+
+### PVR point and line emission (24-phase hardware run, 2026-09-26)
+
+The backend now emits points and lines as colored PVR triangle strips. Points
+use a 1x1 screen-space quad; lines use a one-pixel-wide quad around the clipped
+segment. Polygon `LINE` mode routes visible triangle edges through the line
+path, and polygon `POINT` mode routes its vertices through the point path.
+TinyGL does not expose line-width or point-size state, so these use the default
+one-pixel size.
+
+The 640x480 Dreamcast smoke run returned `pvr_smoke: PASS` / `Program returned
+0`. P12 visibly showed the green polygon outline, horizontal/vertical/reversed
+diagonal/clipped direct lines, and a yellow line loop. P13 showed the cyan
+triangle vertices and five yellow `GL_POINTS`. The phase captures were
+inspected at `/tmp/tinygl-pvr-phase-12.ppm` and
+`/tmp/tinygl-pvr-phase-13.ppm`.
 
 Depth testing also passed on hardware. TinyGL maps nearer vertices to larger
 depth values, so the PVR comparison is reversed for ordered comparisons
@@ -381,17 +397,136 @@ The list-transition failure now also resets `tgl_pvr_list_type` to a sentinel so
 a failed transition cannot leave a stale list type driving the next draw.
 
 Hardware test plan: normal runs should print **no** submission-error summary.
-Because KOS `pvr_prim`/`pvr_list` failures are hard to force deterministically,
-this is verified by code review plus a clean build and a zero-error run rather
-than by injecting failures. Confirm the summary line appears only when an error
-actually occurred.
+The controlled failure test below checks error reporting and recovery without
+forcing a real PVR queue failure. Confirm the summary line appears only when an
+error actually occurred.
 
-Status: **normal-run hardware check passed** in 320x240, 640x480, 768x480, and 768x576 runs; no submission-error summary appeared. On this VGA setup the new chooser correctly takes the 60 Hz path. The non-VGA on-screen choice and forced-failure recovery remain unverified on hardware.
+Status: **normal-run hardware check passed** in 320x240, 640x480, 768x480, and 768x576 runs; no submission-error summary appeared. The one-shot simulated-failure ELF also ran on Dreamcast at 640x480: it logged exactly one injected polygon-header failure, captured all 24 phases, rendered the green triangle in P11 after the injection, printed `1 submission error(s)`, and returned `pvr_smoke: PASS` / exit 0. On this VGA setup the new chooser correctly takes the 60 Hz path. The non-VGA picker was also exercised in Flycast: its log showed selection of `DM_320x240_PAL` (50 Hz), confirming the 50 Hz choice reaches `vid_set_mode()`. Flycast reported the flashrom region as unknown (`00001`), so its regional-default behavior was not verified. Real non-VGA picker and PAL-compatible output validation remain open.
+
+## PVR submission-error one-shot failure injection test
+
+This test verifies the PVR submission-error reporting and recovery added in
+item 5b (`tgl_pvr_submission_errors` counting + half-open list cleanup + fresh
+scene recovery) using a controlled, deterministic, one-shot failure.
+
+### Design
+
+- Injection point: the solid-polygon **header** submission inside
+  `tgl_pvr_draw_triangle()` in `src/pvr_dc.c`. This path is hit by every solid
+  triangle; a failed submission leaves the list half-open (`list_active=1`),
+  so the next `tgl_pvr_flush()` finishes the open list and the following
+  frame's `begin_scene()` starts a fresh scene -- exactly the recovery paths
+  under test.
+- Nature of the failure: **SIMULATED**, not hardware-generated. The backend
+  exposes a thin submission wrapper `tgl_pvr_prim()` that, when the test macro
+  is defined, returns `-1` **without** enqueuing any command and **without**
+  touching the real PVR command queue. It matches KOS's contract when
+  `pvr_prim()` rejects a primitive (e.g. arena full): the list stays open and
+  the call site's production accounting (`tgl_pvr_submission_errors++`,
+  `fprintf`, early `return`) runs unchanged.
+  - It is NOT a hardware-generated failure. The real PVR queue is never
+    corrupted or overflowed, so the console cannot hang. It exercises the
+    backend's *handling* of a KOS error return, which is what we are
+    verifying.
+- One-shot: the smoke test arms the failure for a single phase via
+  `tgl_pvr_test_arm_fail_next()`. The wrapper consumes the arm on the first
+  header submission of that phase, so exactly one failure is injected. Later
+  frames of the same phase and all subsequent phases render normally.
+
+### How the hook is gated (build-time only; disabled in normal builds)
+
+- `src/Makefile`: `CFLAGS += $(EXTRA_CFLAGS)` (mirrors the smoke test's
+  `SMOKE_CFLAGS` hook). Add `-DTGL_PVR_TEST_INJECT_FAIL` here for the library.
+- `src/pvr_dc.c`: the wrapper + `tgl_pvr_test_fail_next`/`_fired` state +
+  `tgl_pvr_test_arm_fail_next()` are compiled only under `#ifdef
+  TGL_PVR_TEST_INJECT_FAIL`. The call site always routes the solid header
+  through `tgl_pvr_prim()`; in normal builds it is a pure pass-through to
+  `pvr_prim()`, so behavior is byte-for-byte unchanged.
+- `tests/dreamcast/pvr_smoke/pvr_smoke.c`: defines `TGL_PVR_TEST_INJECT_PHASE`
+  (default `10`, a single solid-triangle phase) and arms the hook in the phase
+  transition block under the same macro. A local prototype guards against the
+  smoke test not including `src/zgl.h`.
+- `src/zgl.h`: declares `tgl_pvr_test_arm_fail_next()` under the macro.
+
+### Build both variants (normal build does NOT source environ.sh path is
+required; see build notes in this file)
+
+```
+cd /home/gpf/code/dreamcast/tinygl
+source /opt/toolchains/dc/kos/environ.sh
+export PATH=/opt/toolchains/dc/kos/utils/build_wrappers:$PATH
+
+# 1) Normal build -- hook DISABLED
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y TINYGL_USE_SH4ZAM=y
+make -C tests/dreamcast/pvr_smoke clean
+make -C tests/dreamcast/pvr_smoke
+
+# 2) Test build -- ONE-SHOT FAILURE HOOK ENABLED
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y TINYGL_USE_SH4ZAM=y EXTRA_CFLAGS=-DTGL_PVR_TEST_INJECT_FAIL
+make -C tests/dreamcast/pvr_smoke clean
+make -C tests/dreamcast/pvr_smoke SMOKE_CFLAGS=-DTGL_PVR_TEST_INJECT_FAIL
+# To target a different phase, e.g. phase 13:
+make -C tests/dreamcast/pvr_smoke clean
+make -C tests/dreamcast/pvr_smoke SMOKE_CFLAGS="-DTGL_PVR_TEST_INJECT_FAIL -DTGL_PVR_TEST_INJECT_PHASE=13"
+```
+
+Clean before switching variants: these Makefiles do not track compiler-flag
+changes as dependencies, so an incremental build can otherwise reuse objects
+from the previous variant.
+
+Both variants build clean (no warnings/errors). `git diff --check` is clean;
+no SDL2 files are touched.
+
+### Verify the hook is only in the test build
+
+```
+# Object-level proof (normal build = 0, test build = non-zero):
+grep -c tgl_pvr_test_arm_fail_next src/pvr_dc.o
+grep -c "simulating one" src/pvr_dc.o
+
+# ELF-level proof (test ELF .rodata contains the message; normal ELF does not):
+sh-elf-objdump -s -j .rodata tests/dreamcast/pvr_smoke/tinygl-pvr-smoke.elf | grep -a "simulating"
+```
+
+### Run and expected evidence
+
+```
+kos-tool -m /tmp -t 192.168.0.128 -x tests/dreamcast/pvr_smoke/tinygl-pvr-smoke.elf
+```
+
+- Normal ELF: no "simulating" message; shutdown summary reports
+  `0 submission error(s)`. All 24 phases render.
+- Test ELF: one `TinyGL PVR TEST: simulating one polygon-header submission
+  failure` line in phase P11, one `TinyGL PVR: polygon header submission
+  failed` line; then phases P12-P24 continue rendering (recovery). Shutdown
+  summary reports exactly `1 submission error(s)`.
+- Emulator (Flycast) is secondary: its KOS PVR emulation may not return `-1`
+  from `pvr_prim()` on this path, so absence of the message there does not
+  prove the code is wrong -- hardware is the valid check.
+
+Hardware result: **PASS** on the Dreamcast at 640x480. The captured stream
+contains the one injected failure, all 24 phase transitions, exactly one
+submission error at shutdown, and `pvr_smoke: PASS` / `Program returned 0`.
+All 24 PPM phase captures were written to host `/tmp`; the P11 capture shows
+the green triangle rendering after the injected failure.
+
+### Known limitation
+
+This is a simulated KOS error contract, not a real PVR hardware fault. It
+proves the backend recovers from a returned error; it does not exercise a real
+PVR submission failure (which would require overflowing the arena and is not
+safe to do repeatably on hardware). On real hardware, if the backend failed to
+recover from such an error, report the observed hung/garbled state and root
+cause.
 
 ## Next steps
 
-- Work-order item 5 is implemented. Future hardware follow-up: verify 50 Hz on
-  PAL-capable output, confirm the on-screen selector there, and find a safe,
-  deterministic way to exercise PVR submission-error recovery. Normal-run
-  error reporting and viewport captures pass on this NTSC/VGA setup at
-  320x240, 640x480, and 768x480.
+- Work-order item 5 is implemented. The submission-error reporting/recovery is
+  now covered by the one-shot failure-injection test above (build/run commands,
+  gated by `-DTGL_PVR_TEST_INJECT_FAIL`) and passed on real Dreamcast hardware.
+  Future hardware follow-up: validate the 50/60 Hz picker on real non-VGA
+  hardware and confirm PAL output on
+  PAL-capable hardware. Normal-run error reporting and viewport captures pass
+  on this NTSC/VGA setup at 320x240, 640x480, and 768x480.

@@ -69,7 +69,10 @@ void gl_draw_point(GLContext *c,GLVertex *p0)
       gl_add_select(c,p0->zp.z,p0->zp.z);
     } else {
 #ifdef TINYGL_USE_DREAMCAST_PVR
-      if (c->pvr_backend) return;
+      if (c->pvr_backend) {
+        tgl_pvr_draw_point(c,p0);
+        return;
+      }
 #endif
       ZB_plot(c->zb,&p0->zp);
     }
@@ -119,10 +122,6 @@ void gl_draw_line(GLContext *c,GLVertex *p1,GLVertex *p2)
   GLVertex q1,q2;
   int cc1,cc2;
 
-#ifdef TINYGL_USE_DREAMCAST_PVR
-  if (c->pvr_backend) return;
-#endif
-  
   cc1=p1->clip_code;
   cc2=p2->clip_code;
 
@@ -130,6 +129,12 @@ void gl_draw_line(GLContext *c,GLVertex *p1,GLVertex *p2)
     if (c->render_mode == GL_SELECT) {
       gl_add_select1(c,p1->zp.z,p2->zp.z,p2->zp.z);
     } else {
+#ifdef TINYGL_USE_DREAMCAST_PVR
+      if (c->pvr_backend) {
+        tgl_pvr_draw_line(c,p1,p2);
+        return;
+      }
+#endif
         if (c->depth_test)
             ZB_line_z(c->zb,&p1->zp,&p2->zp);
         else
@@ -161,6 +166,11 @@ void gl_draw_line(GLContext *c,GLVertex *p1,GLVertex *p2)
       gl_transform_to_viewport(c,&q1);
       gl_transform_to_viewport(c,&q2);
 
+#ifdef TINYGL_USE_DREAMCAST_PVR
+      if (c->pvr_backend) {
+        tgl_pvr_draw_line(c,&q1,&q2);
+      } else
+#endif
       if (c->depth_test)
           ZB_line_z(c->zb,&q1.zp,&q2.zp);
       else
@@ -434,7 +444,12 @@ void gl_draw_triangle_line(GLContext *c,
                            GLVertex *p0,GLVertex *p1,GLVertex *p2)
 {
 #ifdef TINYGL_USE_DREAMCAST_PVR
-  if (c->pvr_backend) return;
+  if (c->pvr_backend) {
+    if (p0->edge_flag) gl_draw_line(c,p0,p1);
+    if (p1->edge_flag) gl_draw_line(c,p1,p2);
+    if (p2->edge_flag) gl_draw_line(c,p2,p0);
+    return;
+  }
 #endif
     if (c->depth_test) {
         if (p0->edge_flag) ZB_line_z(c->zb,&p0->zp,&p1->zp);
@@ -454,7 +469,12 @@ void gl_draw_triangle_point(GLContext *c,
                             GLVertex *p0,GLVertex *p1,GLVertex *p2)
 {
 #ifdef TINYGL_USE_DREAMCAST_PVR
-  if (c->pvr_backend) return;
+  if (c->pvr_backend) {
+    if (p0->edge_flag) gl_draw_point(c,p0);
+    if (p1->edge_flag) gl_draw_point(c,p1);
+    if (p2->edge_flag) gl_draw_point(c,p2);
+    return;
+  }
 #endif
   if (p0->edge_flag) ZB_plot(c->zb,&p0->zp);
   if (p1->edge_flag) ZB_plot(c->zb,&p1->zp);

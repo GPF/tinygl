@@ -24,6 +24,10 @@ CFLAGS += -DTINYGL_USE_DREAMCAST_PVR
 OBJS += pvr_dc.o
 endif
 
+# Extra compiler flags (e.g. -DTGL_PVR_TEST_INJECT_FAIL for the submission
+# error-injection test). Appended so normal build flags are not clobbered.
+CFLAGS += $(EXTRA_CFLAGS)
+
 all: $(LIB)
 
 $(LIB): $(OBJS)
