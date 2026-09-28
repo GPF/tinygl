@@ -59,6 +59,16 @@ hardware run before the twiddling fix showed the same corruption as Flycast.
 
 ## Dreamcast PVR strip performance benchmark
 
+**CORRECTION (2026-09-27):** every result recorded in this section before the
+"Corrected native-strip results" subsection below was measured with a
+coordinate-mapping bug that made the strip-eligibility gate fail almost every
+frame, so `pvrmark_strips` was actually exercising TinyGL's per-triangle
+fallback path, not the native strip path its write-up describes. See the
+"Textured vertex-packing specialization" section's write-up above for the
+root cause and fix (the same bug affected both `pvrmark_strips` and
+`pvrmark_strips_tex`). Treat all tri/frame and tri/sec figures below as
+fallback-path measurements.
+
 `tests/dreamcast/pvrmark_strips/` ports the random-walk triangle-strip workload
 from GLdc's `samples/pvrmark_strips_gldc/`. It reports frame rate every five
 seconds, uses the KOS sample's per-frame `pvr_get_stats().frame_rate` EMA,
@@ -291,6 +301,104 @@ over many more seconds per candidate load (finer than the current 5s
 window) and/or pick a handful of *fixed* triangle counts and report
 their average FPS across many runs, rather than trusting a fast search's
 self-selected stopping point as a single number.
+
+### Corrected native-strip results (2026-09-27, after the clip-volume fix)
+
+With the coordinate-mapping bug above fixed and `MAX_POLY_COUNT` raised from
+3,500 to 20,000 (`INCREMENT_POLY_COUNT` 2,500->4,000, `DECREMENT_POLY_COUNT`
+200->400 -- the old cap and step sizes were calibrated against fallback-path
+throughput and the fixed native-strip path blows past 3,500 immediately),
+one SH4ZAM-off/on run each on the same hardware/console session
+(KOS 2.3.0, 640x480 VGA, `DC_IP=192.168.0.128`):
+
+| TinyGL build | Threshold triangles/frame | FPS | Triangles/sec |
+|---|---:|---:|---:|
+| SH4ZAM off | 4,150 | 55.22 | 229,158 |
+| SH4ZAM on | 3,100 | 56.16 | 174,093 |
+
+Build/run commands matched the recipe further up this section, with the
+`main.c` cap/step constants as edited above (no CFLAGS override needed --
+they're compile-time constants in the test, not build flags).
+
+At the SH4ZAM-off threshold, TinyGL immediate-build time was the dominant
+cost at 17.993 ms/frame vs. PVR registration's 4.809 ms/frame -- a clear
+shift from the old fallback-path numbers (registration used to dominate at
+13-14 ms/frame). This is expected: the native strip path submits one header
+and batched SQ copies per strip instead of one header per triangle, so PVR
+registration collapsed and the workload is now CPU-build-bound instead of
+PVR-submission-bound.
+
+SH4ZAM-off beat SH4ZAM-on here (229,158 vs. 174,093 tri/sec), which on its
+face looks like a regression, but this is a **single run of each**, and the
+item's own "Actual conclusion" above already established that this exact
+search design produces noisy, discrete, non-representative single-run
+results. Do not read a SH4ZAM regression into one run apiece. The fixed-load
+redo below replaces this threshold-search comparison.
+
+### Fixed-load redo (2026-09-27): does SH4ZAM's CPU win survive end-to-end?
+
+The threshold search's own stopping-point noise (documented above) makes it
+unsuitable for a SH4ZAM A/B comparison even on the corrected workload. Added
+a fixed-load mode to `pvrmark_strips` (`main.c`, `PVRMARK_FIXED_LOADS`):
+instead of searching for a threshold, it runs a fixed list of triangle counts
+(2,000 / 3,000 / 4,000 / 5,000 per frame) for a longer fixed 20-second
+interval each and reports settled average FPS and stage timings per load,
+so per-load noise gets averaged out instead of picking a search's stopping
+point.
+
+Build/run (clean `src` between variants, same as the threshold-search
+recipe):
+
+```bash
+source /opt/toolchains/dc/kos/environ.sh
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y
+make -C tests/dreamcast/pvrmark_strips clean
+make -C tests/dreamcast/pvrmark_strips BENCH_CFLAGS=-DPVRMARK_FIXED_LOADS
+kos-tool -m /tmp -t 192.168.0.128 -x tests/dreamcast/pvrmark_strips/tinygl-pvrmark-strips.elf
+
+# SH4ZAM on
+make -C src clean
+make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y TINYGL_USE_SH4ZAM=y
+make -C tests/dreamcast/pvrmark_strips clean
+make -C tests/dreamcast/pvrmark_strips BENCH_CFLAGS="-DPVRMARK_FIXED_LOADS -DTINYGL_USE_SH4ZAM"
+kos-tool -m /tmp -t 192.168.0.128 -x tests/dreamcast/pvrmark_strips/tinygl-pvrmark-strips.elf
+```
+
+One run of each variant (KOS 2.3.0, 640x480 VGA, same console session):
+
+| Load (tri/frame) | Off: FPS | Off: tri/sec | Off: immediate build | On: FPS | On: tri/sec | On: immediate build |
+|---:|---:|---:|---:|---:|---:|---:|
+| 2,000 | 56.16 | 112,316 | 8.699 ms | 56.16 | 112,315 | 8.518 ms |
+| 3,000 | 60.14 | 180,427 | 13.116 ms | 60.07 | 180,222 | 12.869 ms |
+| 4,000 | 55.78 | 223,133 | 17.465 ms | 47.55 | 190,192 | 17.139 ms |
+| 5,000 | 43.15 | 215,727 | 21.883 ms | 47.20 | 236,010 | 21.462 ms |
+
+**Reading this:** the immediate-build column (the CPU-side cost SH4ZAM
+actually targets) is nearly identical between variants at every load --
+within about 1-2%, far smaller than the 30-50%+ transform-stage reductions
+SH4ZAM showed in isolation on other benchmarks (TinyBalls, item 7). This
+workload never calls `glRotatef`/`glTranslatef` per frame (the modelview
+matrix is loaded once and never changes), so it doesn't exercise the
+per-frame matrix-load/transform path SH4ZAM accelerates -- consistent with
+this file's existing note that "this strip workload has no rotation or
+normals, so it does not exercise SH4ZAM's current sine/cosine or
+vector-normalization paths." The FPS/tri-sec columns disagree in direction
+between loads (off wins at 4,000, on wins at 5,000) with no consistent
+pattern, which given the near-identical build times looks like per-run
+vsync/frame-time-bucket noise rather than a real SH4ZAM effect -- this is
+one run per load, not an averaged multi-run result.
+
+**Answer to the redo's motivating question:** now that the native strip path
+removed the PVR-registration bottleneck, SH4ZAM's CPU-side transform speedup
+still does not surface end-to-end on this workload -- same conclusion as
+items 6 (original, pre-correction) and 7 (TinyBalls), but for a workload-
+content reason (no per-frame matrix reload/rotation here) rather than the
+search-methodology noise that made the original comparison uninterpretable.
+A workload that actually reloads/rotates the modelview matrix per frame
+while using the native strip path would be a better test of whether SH4ZAM
+helps *this* code path; this fixed-load harness is reusable for that with a
+different `do_frame()`.
 
 ## Dreamcast TinyBalls math stress scene
 
@@ -973,14 +1081,47 @@ make -C src CC=kos-cc TINYGL_USE_GLX= TINYGL_USE_DREAMCAST_PVR=y EXTRA_CFLAGS=-D
 make -C tests/dreamcast/pvrmark_strips_tex clean all BENCH_CFLAGS=-DTINYGL_PROFILE_PVR
 ```
 
-**Not yet run on hardware.** Planned acceptance: run
-`tinygl-pvrmark-strips-tex.elf` (profiled build) before/after this change and
-compare `tgl_profile_pvr_pack_us`'s per-strip mean; then re-run `pvr_smoke`
-phases 18-20 and confirm the non-black pixel counts still match the item-9
-baseline (150,528 / 55,296 / 75,264) to confirm the textured path stayed
-bit-identical. `pvrmark_strips_tex` measures throughput/timing only (no
-screenshot capture); `pvr_smoke` remains the correctness check for textured
-output.
+**Hardware run (2026-09-27), KOS 2.3.0, 640x480 VGA, `DC_IP=192.168.0.128`:**
+the first hardware run of `tinygl-pvrmark-strips-tex.elf` (profiled build)
+reported `0 strip calls` / hundreds of thousands of fallback triangles every
+phase -- `tgl_pvr_draw_strip()` was never reached. Root cause: the shared
+random-walk workload's coordinate mapping put a large fraction of vertices
+outside the canonical `[-1,1]` clip volume (see NEXT_TASKS.md item 10's
+"Vertex-conversion sub-step" note for the full analysis), so the strip
+eligibility gate in `src/vertex.c::glopEnd()` failed for essentially every
+strip and every triangle silently went through the per-triangle fallback
+instead. This also means the item-6 `pvrmark_strips` numbers further down
+this file were measured on the fallback path, not the native strip path.
+
+Fixed by rescaling the vertex mapping in both
+`tests/dreamcast/pvrmark_strips/main.c` and
+`tests/dreamcast/pvrmark_strips_tex/main.c` from `x/320.0f-1.0f,
+y/240.0f-1.0f` to `x/512.0f-1.0f, y/256.0f-1.0f` (matching the `&1023`/`&511`
+generation masks exactly, so every generated vertex now lands inside the clip
+volume). Re-ran on hardware: every phase now reports `0 fallback triangles`,
+confirming the strip path is reached every frame.
+
+Before/after pack-timing comparison (post-fix, same hardware/build, one run
+each; before variant built with a temporary
+`-DTGL_PVR_TEST_PRE_SPECIALIZATION_TEX_PACK` macro in `src/pvr_dc.c` that
+replicates the pre-optimization packing for direct A/B without reverting the
+committed change):
+
+| Variant | `tgl_profile_pvr_pack_us` mean | Samples |
+|---|---:|---:|
+| Before (generic `tgl_pvr_set_vertex()` + overwrite) | ~3,788 us/strip | 8-17 |
+| After (`tgl_pvr_set_vertex_tex()`) | ~1,647 us/strip | 9-18 |
+
+About a 56% reduction in per-strip packing time from dropping the discarded
+ARGB math, consistent with removing 4 float clamp/multiply pairs per vertex
+across ~3,500-vertex strips.
+
+Correctness check: re-ran `pvr_smoke` (default build,
+`TINYGL_USE_DREAMCAST_PVR=y TINYGL_USE_SH4ZAM=y`, no test flags) after
+restoring the normal (specialized) `src/pvr_dc.c`. All 24 phases passed,
+`pvr_smoke: PASS`, `Program returned 0`. Parsed P18-P20 non-black pixel
+counts: 150,528 / 55,296 / 75,264 -- bit-identical to the item-9 baseline.
+The textured-strip specialization is hardware-confirmed correct and faster.
 
 ## Next steps
 

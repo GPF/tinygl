@@ -16,12 +16,17 @@
 enum { PHASE_HALVE, PHASE_INCR, PHASE_DECR, PHASE_FINAL };
 
 enum {
-    /* Keep the initial search conservative while exercising TinyGL's native
-       strip submission path; the direct KOS sample uses a much higher start. */
-    MAX_POLY_COUNT = 3500,
-    INITIAL_POLY_COUNT = MAX_POLY_COUNT,
-    INCREMENT_POLY_COUNT = 2500,
-    DECREMENT_POLY_COUNT = 200
+    /* Raised from the original 3,500 cap: fixing the workload's coordinate
+       generation (see the /320,/240 -> /512,/256 change below) made every
+       vertex land inside the clip volume, so the strip-eligibility gate in
+       src/vertex.c now actually reaches tgl_pvr_draw_strip() every frame
+       instead of falling back to per-triangle submission. The native strip
+       path is fast enough that 3,500 no longer finds a threshold (the old
+       cap was calibrated against fallback-path throughput). */
+    MAX_POLY_COUNT = 20000,
+    INITIAL_POLY_COUNT = 3500,
+    INCREMENT_POLY_COUNT = 4000,
+    DECREMENT_POLY_COUNT = 400
 };
 
 static int polycnt;
@@ -98,22 +103,22 @@ static void do_frame(void) {
     get_vert(&seed, &x, &y, &col);
     z = getnum(&seed, 128) + 1;
     set_color(col);
-    glVertex3f((float)x / 320.0f - 1.0f,
-               (float)y / 240.0f - 1.0f,
+    glVertex3f((float)x / 512.0f - 1.0f,
+               (float)y / 256.0f - 1.0f,
                -(float)z / 128.0f);
 
     for (int i = 0; i < polycnt; ++i) {
         get_vert(&seed, &x, &y, &col);
         set_color(col);
-        glVertex3f((float)x / 320.0f - 1.0f,
-                   (float)y / 240.0f - 1.0f,
+        glVertex3f((float)x / 512.0f - 1.0f,
+                   (float)y / 256.0f - 1.0f,
                    -(float)z / 128.0f);
     }
 
     get_vert(&seed, &x, &y, &col);
     set_color(col);
-    glVertex3f((float)x / 320.0f - 1.0f,
-               (float)y / 240.0f - 1.0f,
+    glVertex3f((float)x / 512.0f - 1.0f,
+               (float)y / 256.0f - 1.0f,
                -(float)z / 128.0f);
 
     begin_draw = timer_us_gettime64();
@@ -239,6 +244,61 @@ static void check_switch(void) {
     fflush(stdout);
 }
 
+#ifdef PVRMARK_FIXED_LOADS
+/* Fixed-load mode (NEXT_TASKS.md item 6 redo): the threshold-search loop
+ * above stops the instant one noisy 5-second avgfps average crosses the
+ * target, which the 2026-09-27 investigation showed produces unstable,
+ * non-representative single numbers. This mode instead runs a handful of
+ * fixed triangle counts, each for a much longer fixed interval, and reports
+ * the settled average FPS and stage timings at each -- enough runs at a
+ * fixed load average out the same noise instead of letting it pick the
+ * stopping point. Enable with `BENCH_CFLAGS=-DPVRMARK_FIXED_LOADS` (add
+ * `-DPVRMARK_FIXED_LOAD_SEC=<n>` to override the default 20s-per-load
+ * duration). */
+#ifndef PVRMARK_FIXED_LOAD_SEC
+#define PVRMARK_FIXED_LOAD_SEC 20
+#endif
+
+static const int fixed_loads[] = { 2000, 3000, 4000, 5000 };
+enum { FIXED_LOAD_COUNT = sizeof(fixed_loads) / sizeof(fixed_loads[0]) };
+
+int main(int argc, char **argv) {
+    int load_index;
+
+    (void)argc;
+    (void)argv;
+
+    setup();
+#ifdef TINYGL_USE_SH4ZAM
+    printf("TinyGL library build: SH4ZAM enabled\n");
+#else
+    printf("TinyGL library build: SH4ZAM disabled\n");
+#endif
+    printf("Fixed-load mode: %d loads, %d seconds each\n", FIXED_LOAD_COUNT,
+           PVRMARK_FIXED_LOAD_SEC);
+
+    for (load_index = 0; load_index < FIXED_LOAD_COUNT; ++load_index) {
+        time_t load_begin;
+
+        switch_tests(fixed_loads[load_index]);
+        load_begin = time(NULL);
+
+        while (time(NULL) < load_begin + PVRMARK_FIXED_LOAD_SEC) {
+            do_frame();
+            running_stats();
+        }
+
+        print_stats(avgfps);
+        printf("Fixed load %d done: %d tri/frame, %.2f fps, %.0f tri/sec\n",
+               load_index, polycnt, avgfps, polycnt * avgfps);
+        fflush(stdout);
+    }
+
+    printf("All fixed loads complete. Exiting.\n");
+    glClose();
+    return 0;
+}
+#else
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -261,3 +321,4 @@ int main(int argc, char **argv) {
     glClose();
     return 0;
 }
+#endif

@@ -131,22 +131,22 @@ static void do_frame(void) {
     get_vert(&seed, &x, &y, &col);
     z = getnum(&seed, 128) + 1;
     glTexCoord2f((float)x / 1023.0f, (float)y / 511.0f);
-    glVertex3f((float)x / 320.0f - 1.0f,
-               (float)y / 240.0f - 1.0f,
+    glVertex3f((float)x / 512.0f - 1.0f,
+               (float)y / 256.0f - 1.0f,
                -(float)z / 128.0f);
 
     for (int i = 0; i < polycnt; ++i) {
         get_vert(&seed, &x, &y, &col);
         glTexCoord2f((float)x / 1023.0f, (float)y / 511.0f);
-        glVertex3f((float)x / 320.0f - 1.0f,
-                   (float)y / 240.0f - 1.0f,
+        glVertex3f((float)x / 512.0f - 1.0f,
+                   (float)y / 256.0f - 1.0f,
                    -(float)z / 128.0f);
     }
 
     get_vert(&seed, &x, &y, &col);
     glTexCoord2f((float)x / 1023.0f, (float)y / 511.0f);
-    glVertex3f((float)x / 320.0f - 1.0f,
-               (float)y / 240.0f - 1.0f,
+    glVertex3f((float)x / 512.0f - 1.0f,
+               (float)y / 256.0f - 1.0f,
                -(float)z / 128.0f);
 
     begin_draw = timer_us_gettime64();
@@ -214,6 +214,9 @@ static void print_stats(float avgfps) {
                scene_submit_time / scale);
     }
 #ifdef TINYGL_PROFILE_PVR
+    printf("  PVR calls: %llu strip calls, %llu fallback triangles\n",
+           (unsigned long long)tgl_profile_pvr_strip_count,
+           (unsigned long long)tgl_profile_pvr_triangle_count);
     printf("  PVR sample means: strip pack %.1f us (%.0f strips), copy batch "
            "%.1f us (%.0f copies)\n",
            tgl_profile_pvr_strip_samples ?

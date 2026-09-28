@@ -186,7 +186,49 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
      default is not a reliable test. KOS could not create the `/pc/...` PPM
      screenshots, so this run verifies mode selection from the log, not visible
      rendering. Real non-VGA hardware validation remains useful.
-6. **Complete the PVR triangle-strip performance comparison.** Data
+6. **Complete the PVR triangle-strip performance comparison.**
+   **CORRECTION (2026-09-27, later same day):** all data below (the 25-run
+   variance investigation and the "Full comparison" table) was collected
+   while `pvrmark_strips`'s workload had a coordinate-mapping bug that made
+   the strip-eligibility gate fail almost every frame -- see item 10's
+   "Vertex-conversion sub-step" note above for the root cause. **Every
+   number below measured the per-triangle fallback path, not the native
+   strip path**, despite this item's framing. The fallback-vs-native-strip
+   throughput difference is large (single-run fixed-workload comparison:
+   ~162k tri/sec fallback vs. ~229k tri/sec native strip, SH4ZAM off --
+   about 42% higher), so treat every "tri/frame"/"tri/sec" figure below as a
+   fallback-path measurement, not evidence about the strip path. The
+   variance investigation's conclusion (the search design's own stopping
+   point is noisy) is unaffected by this bug and still stands. After the
+   fix, `MAX_POLY_COUNT` also had to rise from 3,500 to 20,000 -- the old
+   cap could no longer find a threshold once the fast path was actually
+   reached. A single post-fix SH4ZAM-off/on pair was run for a sanity check
+   (4,150 tri/frame @ 55.22 fps / 229,158 tri/sec off vs. 3,100 tri/frame @
+   56.16 fps / 174,093 tri/sec on -- one run each, so treat this as a
+   preliminary, noisy data point under the same known search-methodology
+   caveat, not a conclusion that SH4ZAM regresses the strip path).
+
+   **Redo, DONE (2026-09-27):** rather than more threshold searches, added a
+   fixed-load mode (`PVRMARK_FIXED_LOADS` in
+   `tests/dreamcast/pvrmark_strips/main.c`) that runs fixed triangle counts
+   (2,000/3,000/4,000/5,000 per frame) for a longer fixed 20s interval each
+   instead of searching for a threshold, and compares settled FPS and stage
+   timing per load between SH4ZAM off/on. Result: immediate-build time (the
+   CPU-side cost SH4ZAM targets) is nearly identical between variants at
+   every load (within ~1-2%) -- because this workload never reloads/rotates
+   the modelview matrix per frame, so it doesn't exercise SH4ZAM's
+   transform/trig paths at all. FPS/tri-sec differ per load with no
+   consistent winner, consistent with per-run vsync-bucket noise rather than
+   a real SH4ZAM effect. **Conclusion: on the native strip path, as on
+   TinyBalls (item 7), SH4ZAM's CPU-side win does not surface end-to-end for
+   this specific workload** -- here because the workload doesn't reach
+   SH4ZAM's accelerated code paths, not because of search noise. See
+   `TESTING.md`'s "Fixed-load redo" for the full table and analysis. Left
+   open: a workload that actually reloads/rotates the modelview matrix per
+   frame on the native strip path would be a more direct test of whether
+   SH4ZAM helps that code path; the fixed-load harness is reusable for it.
+
+   Data
    collected (2026-09-27) across 4 same-day sessions (25 total runs) shows
    TinyGL's SH4ZAM-off result on `pvrmark_strips` is **not a stable single
    number, and no further hardware runs of the current design will fix
@@ -465,20 +507,45 @@ object counts with `bruces_balls`. The test captures `/pc/tinyballs.ppm` after
     `gl_add_op()` and immediate-mode architecture out of scope for this step.
     See `TESTING.md` for counts and hardware measurements.
 
-    **Vertex-conversion sub-step (in progress, not yet hardware-tested):**
+    **Vertex-conversion sub-step: DONE, hardware-confirmed (2026-09-27).**
     `tgl_pvr_draw_strip`'s batched SQ path now uses a specialized
     `tgl_pvr_set_vertex_tex()` for textured vertices so it skips the ARGB
     color-component math that the textured branch immediately discarded
     (overwritten to `argb = 0xFFFFFFFF`). Output is bit-identical; only dead
-    work was removed. Neither existing hardware test exercised the affected
-    code path (`pvrmark_strips` is untextured; `pvr_smoke`'s textured phases
-    use fans/triangles, not strips), so added
-    `tests/dreamcast/pvrmark_strips_tex/` -- a textured copy of
-    `pvrmark_strips` -- to measure `tgl_profile_pvr_pack_us` on an actually
-    textured strip workload. See `TESTING.md` for build commands and the
-    hardware acceptance plan. Next after hardware confirms this: decide
-    whether the solid-path ARGB conversion is worth caching/hoisting earlier
-    (likely a broader win than this textured-only dead-work removal).
+    work was removed.
+
+    **Bug found and fixed while setting up this test:** the new
+    `tests/dreamcast/pvrmark_strips_tex/` benchmark initially reported
+    `0 strip calls` -- `tgl_pvr_draw_strip()` was never reached; every
+    triangle went through the per-triangle fallback instead. Root cause was
+    in the shared random-walk workload (`pvrmark_strips` and
+    `pvrmark_strips_tex` share the same `get_vert()`/coordinate-mapping
+    pattern): `get_vert()` masks `x` to `[0,1023]` and `y` to `[0,511]` for a
+    cheap power-of-two wraparound, but `do_frame()` mapped them to clip space
+    with `x/320.0f-1.0f` and `y/240.0f-1.0f`, which only covers `[-1,1]` for
+    `x` in `[0,639]` and `y` in `[0,479]`. Roughly 37.5% of x-samples and 6%
+    of y-samples landed outside the canonical clip volume, so the strip
+    eligibility gate (`src/vertex.c`'s `glopEnd()`, which requires every
+    vertex in the strip to have `clip_code == 0`) failed for any strip longer
+    than a few vertices -- essentially always for these benchmarks' typical
+    hundreds-to-thousands-of-vertex strips. **This means the item-6
+    `pvrmark_strips` SH4ZAM A/B numbers recorded below were measured on the
+    per-triangle fallback path, not the native strip path, despite the
+    write-up at the time saying otherwise.** Fixed by rescaling to match the
+    mask exactly (`x/512.0f-1.0f`, `y/256.0f-1.0f`) in both
+    `tests/dreamcast/pvrmark_strips/main.c` and
+    `tests/dreamcast/pvrmark_strips_tex/main.c`; confirmed on hardware that
+    every vertex now stays in-bounds (`0 fallback triangles` for the whole
+    run, all triangles going through `tgl_pvr_draw_strip()`).
+    `MAX_POLY_COUNT` in `pvrmark_strips` was also raised from 3,500 to 20,000
+    (with matching larger increment/decrement steps) because the old cap was
+    calibrated against fallback-path throughput and the fixed native-strip
+    path blows past it immediately. See `TESTING.md` for the corrected
+    hardware numbers (before/after pack timing and the redone item-6 A/B).
+
+    Next after this: decide whether the solid-path ARGB conversion is worth
+    caching/hoisting earlier (likely a broader win than this textured-only
+    dead-work removal).
 
 Keep each change small and add a visible hardware test scene alongside it.
 Inspect vertex flags, color packing, UV/depth mapping, alignment, cache

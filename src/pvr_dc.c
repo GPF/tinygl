@@ -785,9 +785,22 @@ void tgl_pvr_draw_strip(GLContext *c, GLVertex *vertices, int count) {
       if (textured) {
         for (i = 0; i < batch_count; ++i) {
           int idx = batch_start + i;
+#ifdef TGL_PVR_TEST_PRE_SPECIALIZATION_TEX_PACK
+          /* Temporary before/after comparison for NEXT_TASKS.md item 10's
+           * vertex-conversion sub-step: replicate the pre-optimization
+           * packing (generic tgl_pvr_set_vertex(), then overwrite u/v/argb)
+           * to measure tgl_profile_pvr_pack_us against tgl_pvr_set_vertex_tex(). */
+          tgl_pvr_set_vertex(&verts[i], &vertices[idx],
+                             (float)vertices[idx].zp.x,
+                             (float)vertices[idx].zp.y, idx == count - 1);
+          verts[i].u = vertices[idx].tex_coord.X;
+          verts[i].v = vertices[idx].tex_coord.Y;
+          verts[i].argb = 0xFFFFFFFF;
+#else
           tgl_pvr_set_vertex_tex(&verts[i], &vertices[idx],
                                  (float)vertices[idx].zp.x,
                                  (float)vertices[idx].zp.y, idx == count - 1);
+#endif
         }
       } else {
         for (i = 0; i < batch_count; ++i) {
