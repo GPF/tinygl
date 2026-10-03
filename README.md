@@ -114,7 +114,7 @@ https://github.com/user-attachments/assets/ee74a0ba-0a07-4463-a8be-817ccb256c5d
 A NeHe lesson 06 textured cube, running through TinyGL's PVR backend. The
 clip above was recorded in Flycast because that's the easiest way to capture
 video. The same build has also been run on a real Dreamcast and looks the
-same there. [Full-quality MP4](docs/media/nehe06.mp4) (720p, 9 s).
+same there.
 
 ## What `pvr_smoke` checks (real hardware captures)
 
