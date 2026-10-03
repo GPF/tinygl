@@ -108,8 +108,8 @@ output, and recorded hardware results.
 The X11 programs in `examples/` are upstream's and don't build for Dreamcast.
 
 ### `nehe06` demo
+https://github.com/user-attachments/assets/ee74a0ba-0a07-4463-a8be-817ccb256c5d
 
-![nehe06: textured cube spinning on the PVR backend](docs/media/nehe06.gif)
 
 A NeHe lesson 06 textured cube, running through TinyGL's PVR backend. The
 clip above was recorded in Flycast because that's the easiest way to capture
