@@ -620,19 +620,25 @@ pixel count, color count, and bounding box. Results:
 | 2 | R/G/B gouraud | 34560, 4202 colors | ✅ per-vertex interpolation |
 | 3 | translate+rotate | 13872 green | ✅ transformed, shifted upper-right |
 | 4 | clip 4 edges | 13983, 5 colors | ✅ 4 edge-crossing triangles |
-| 5 | cull disabled | 9600 green | ✅ drawn |
+| 5 | cull disabled | 9600 white | ✅ drawn |
 | 6 | cull-back + CCW | 9600 green | ✅ front face drawn |
 | 7 | cull-back + CW | 0 (black) | ✅ back face culled |
 | 8 | cull-front + CCW | 0 (black) | ✅ front face culled |
-| 9 | cull-front + CW | 9600 green | ✅ front face drawn |
+| 9 | cull-front + CW | 9600 yellow | ✅ front face drawn |
 | 10 | cull front+back, CCW + CW | 0 (black) | ✅ both polygon orientations culled |
 | 11 | polygon FILL | 9600 green | ✅ filled |
-| 12 | polygon LINE | 0 (black) | ✅ no-op on PVR |
-| 13 | polygon POINT | 0 (black) | ✅ no-op on PVR |
+| 12 | polygon LINE | 0 (black) | ✅ no-op on PVR (at the time; superseded, see the 24-phase run below) |
+| 13 | polygon POINT | 0 (black) | ✅ no-op on PVR (at the time; superseded, see the 24-phase run below) |
 | 14 | depth LESS, far red then near green, writes enabled | 9600 green | ✅ near fragment wins |
 | 15 | depth LESS, near green then far red, writes enabled | 9600 green | ✅ result independent of draw order |
 | 16 | depth LESS, near green then far red, writes disabled | 9600 red | ✅ later far fragment overwrites |
 | 17 | depth NEVER, green triangle | 0 (black) | ✅ all fragments rejected |
+
+Note: the colors in this table are from the 2026-09-26 run. The smoke test
+now draws each culling phase in its own color (P5 white, P6 green, P7 cyan,
+P8 magenta, P9 yellow), so current captures differ in color but not in which
+phases are visible. Phases 12 and 13 later gained real line and point output;
+see the 24-phase run below and `docs/pvr_smoke_results.md`.
 
 Culling is handled in `clip.c` geometry code (front-face sign from the vertex
 coordinates, then filtered by `current_cull_face`), so it works on the PVR
