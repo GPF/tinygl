@@ -29,9 +29,9 @@ TinyGL's existing software-renderer behavior and public API where practical.
 
 The local SDL2 Dreamcast code is reference-only:
 
-- Renderer: `/home/gpf/code/dreamcast/SDL2/src/render/dreamcast/`
+- Renderer: `<SDL2 checkout>/src/render/dreamcast/`
 - Video driver and PVR video-mode hint path:
-  `/home/gpf/code/dreamcast/SDL2/src/video/dreamcast/`
+  `<SDL2 checkout>/src/video/dreamcast/`
 
 Use it to understand KOS/PVR setup behavior; implement the TinyGL backend in
 this repository.

@@ -928,7 +928,7 @@ scene recovery) using a controlled, deterministic, one-shot failure.
 required; see build notes in this file)
 
 ```
-cd /home/gpf/code/dreamcast/tinygl
+cd /path/to/tinygl
 source /opt/toolchains/dc/kos/environ.sh
 export PATH=/opt/toolchains/dc/kos/utils/build_wrappers:$PATH
 

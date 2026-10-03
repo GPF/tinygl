@@ -7,19 +7,19 @@ explicitly said so.
 
 ## Sources checked
 
-- **GLdc**, local checkout: `/home/gpf/code/dreamcast/GLdc` (your fork,
+- **GLdc**, local checkout: `$DC_ROOT/GLdc` (a fork,
   `gitlab.com/gpferror/GLdc`, ahead of upstream `gitlab.com/simulant/GLdc`).
 - **kos-ports `libGL`** (`/opt/toolchains/dc/kos-ports/libGL/dist/libGL-1.1.1`):
   this is *also* GLdc, same repo, just an older checkout pulled in as the
   kos-ports package. Not a separate implementation.
 - **libKGL** (`https://github.com/KallistiOS/libkgl.git`), the old, explicitly
   deprecated KallistiGL project (per its kos-ports `pkg-descr`). Cloned to
-  `/home/gpf/code/dreamcast/libkgl`, sibling to GLdc and SDL2, for future
+  `$DC_ROOT/libkgl`, sibling to GLdc and SDL2, for future
   reference -- not part of any TinyGL build.
-- **SDL2** (`/home/gpf/code/dreamcast/SDL2/src/render/dreamcast/`,
+- **SDL2** (`$DC_ROOT/SDL2/src/render/dreamcast/`,
   `src/video/dreamcast/`): reference-only per project AGENTS.md, for PVR/video
   mode setup, not GL specifically.
-- **DCSinge** (`/home/gpf/code/dreamcast/DCSinge`), specifically
+- **DCSinge** (`$DC_ROOT/DCSinge`), specifically
   `src/dcfmv.c` (FMV frame-quad submission): a non-GL, hand-rolled PVR
   consumer -- a second data point on raw PVR submission style, outside any
   GL implementation.
